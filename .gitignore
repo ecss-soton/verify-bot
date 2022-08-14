@@ -102,3 +102,13 @@ dist
 
 # TernJS port file
 .tern-port
+
+
+# Added by cargo
+/target
+
+# Idea stuff
+/.idea/.gitignore
+/.idea/modules.xml
+/.idea/vcs.xml
+/.idea/verify-bot.iml
