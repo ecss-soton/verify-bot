@@ -1,4 +1,5 @@
 use cached::proc_macro::cached;
+use cached::Cached;
 use futures::stream::FuturesUnordered;
 use once_cell::sync::Lazy;
 use reqwest::{header, Client, ClientBuilder, Url};
@@ -11,6 +12,7 @@ use serenity::model::guild::Member;
 use serenity::model::prelude::{GuildId, RoleId, UserId};
 use serenity::model::Timestamp;
 use serenity::Error;
+use std::env;
 
 pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Result<(), Error> {
     let guild_id = command.guild_id.unwrap();
@@ -27,7 +29,7 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                             d.ephemeral(true).content("You have now been verified!")
                         })
                 })
-                .await?;
+                .await
         } else {
             command
                 .create_interaction_response(ctx, |r| {
@@ -36,22 +38,21 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                             d.content(concat!("It looks like your server doesn't support this bot, please contact the admins."))
                         })
                 })
-                .await?;
+                .await
         }
     } else {
         command
             .create_interaction_response(ctx, |r| {
                 r.kind(InteractionResponseType::ChannelMessageWithSource)
                     .interaction_response_data(|d| {
-                        d.ephemeral(true).content(concat!(
-                            "Please verify yourself by going to ",
-                            dotenv!("API_URL")
+                        d.ephemeral(true).content(format!(
+                            "Please verify yourself by going to {}",
+                            env::var("API_URL").expect("API_URL environment var has not been set.")
                         ))
                     })
             })
-            .await?;
+            .await
     }
-    Ok(())
 }
 
 pub async fn batch_verify(ctx: &Context, member: Member) {
@@ -80,14 +81,19 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
         let mut unordered = FuturesUnordered::new();
         while let Some(member) = members.next().await {
             // Filter all the members that are in the cache and have the verified role.
-            if let None = member
+            if member
                 .roles(ctx)
-                .filter(|v| v.iter().find(|r| r.id == role).is_some())
+                .filter(|v| v.iter().any(|r| r.id == role))
+                .is_none()
             {
                 unordered.push(batch_verify(ctx, member));
             }
         }
-        while let Some(_) = unordered.next().await {}
+        {
+            let mut cache = GET_ROLE_ID.lock().await;
+            cache.cache_remove(&guild_id);
+        }
+        while (unordered.next().await).is_some() {}
         command
             .edit_original_interaction_response(ctx, |r| {
                 r.content(concat!("Successfully completed re-verifications."))
@@ -118,7 +124,11 @@ static CLIENT: Lazy<Client> = Lazy::new(|| {
     let mut headers = header::HeaderMap::new();
     headers.insert(
         "Authorization",
-        header::HeaderValue::from_static(concat!("Authorization: ", dotenv!("API_KEY"))),
+        header::HeaderValue::from_str(&*format!(
+            "Authorization: {}",
+            env::var("API_KEY").expect("API_URL environment var has not been set.")
+        ))
+        .unwrap(),
     );
     ClientBuilder::new()
         .default_headers(headers)
@@ -135,10 +145,14 @@ struct ServerInfo {
 #[cached(option = true)]
 async fn get_role_id(guild_id: GuildId) -> Option<RoleId> {
     let resp = CLIENT
-        .get(Url::parse_with_params(
-            concat!(dotenv!("API_URL"), "/api/v1/guild"),
-            &[("guildId", format!("{guild_id}"))],
-        ))
+        .get(
+            Url::parse_with_params(
+                &*(env::var("API_URL").expect("API_URL environment var has not been set.")
+                    + "api/v1/guild"),
+                &[("guildId", format!("{guild_id}"))],
+            )
+            .ok()?,
+        )
         .send()
         .await;
 
@@ -153,13 +167,17 @@ async fn get_role_id(guild_id: GuildId) -> Option<RoleId> {
 #[cached(key = "UserId", option = true, convert = r##"{user_id}"##)]
 async fn is_verified(user_id: UserId, guild_id: GuildId) -> Option<()> {
     let resp = CLIENT
-        .get(Url::parse_with_params(
-            concat!(dotenv!("API_URL"), "/api/v1/verified"),
-            &[
-                ("userId", format!("{user_id}")),
-                ("guildId", format!("{guild_id}")),
-            ],
-        ))
+        .get(
+            Url::parse_with_params(
+                &*(env::var("API_URL").expect("API_URL environment var has not been set.")
+                    + "api/v1/verified"),
+                &[
+                    ("userId", format!("{user_id}")),
+                    ("guildId", format!("{guild_id}")),
+                ],
+            )
+            .ok()?,
+        )
         .send()
         .await;
 
@@ -168,7 +186,7 @@ async fn is_verified(user_id: UserId, guild_id: GuildId) -> Option<()> {
             if let Ok(verified) = resp.json::<Verified>().await {
                 if verified.verified {
                     {
-                        let cache = GET_ROLE_ID.lock().await;
+                        let mut cache = GET_ROLE_ID.lock().await;
                         cache.cache_set(guild_id, verified.role_id);
                     }
                     return Some(());

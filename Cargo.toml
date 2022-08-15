@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 cached = "0.38.0"
-dotenv_codegen = "0.15.0"
+dotenv = "0.15.0"
 reqwest = { version = "0.11.11", features = ["json"] }
 serenity = { version = "0.11.5", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "cache"] }
 tokio = { version = "1.20", features = ["macros", "rt-multi-thread"] }
