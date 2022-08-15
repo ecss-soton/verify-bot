@@ -1,8 +1,10 @@
+use std::env;
+
 use cached::proc_macro::cached;
 use cached::Cached;
 use futures::stream::FuturesUnordered;
 use once_cell::sync::Lazy;
-use reqwest::{header, Client, ClientBuilder, Url};
+use reqwest::{header, Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 use serenity::client::Context;
 use serenity::futures::StreamExt;
@@ -12,7 +14,21 @@ use serenity::model::guild::Member;
 use serenity::model::prelude::{GuildId, RoleId, UserId};
 use serenity::model::Timestamp;
 use serenity::Error;
-use std::env;
+
+static CLIENT: Lazy<Client> = Lazy::new(|| {
+    let mut headers = header::HeaderMap::new();
+    headers.insert(
+        "Authorization",
+        header::HeaderValue::from_str(
+            &*env::var("API_KEY").expect("API_URL environment var has not been set."),
+        )
+        .unwrap(),
+    );
+    ClientBuilder::new()
+        .default_headers(headers)
+        .build()
+        .unwrap()
+});
 
 pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Result<(), Error> {
     let guild_id = command.guild_id.unwrap();
@@ -55,21 +71,7 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
     }
 }
 
-pub async fn batch_verify(ctx: &Context, member: Member) {
-    let (guild_id, user_id) = (member.guild_id, member.user.id);
-    if is_verified(user_id, guild_id).await.is_some() {
-        if let Some(role) = get_role_id(guild_id).await {
-            if let Err(e) = ctx
-                .http
-                .add_member_role(guild_id.0, user_id.0, role.0, None)
-                .await
-            {
-                eprintln!("{e}");
-            }
-        }
-    }
-}
-
+/// Re-verifies an entire server (This only adds verified people), also invalidates guild role cache
 pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) -> Result<(), Error> {
     let guild_id = command.guild_id.unwrap();
     command.defer(ctx).await?;
@@ -80,12 +82,8 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
             .boxed();
         let mut unordered = FuturesUnordered::new();
         while let Some(member) = members.next().await {
-            // Filter all the members that are in the cache and have the verified role.
-            if member
-                .roles(ctx)
-                .filter(|v| v.iter().any(|r| r.id == role))
-                .is_none()
-            {
+            // Filter all the members that have the verified role or are a bot.
+            if !member.user.bot && !member.roles.iter().any(|r| r == &role) {
                 unordered.push(batch_verify(ctx, member));
             }
         }
@@ -109,7 +107,23 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
     Ok(())
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone)]
+/// Verifies multiple users, any errors are just printed.
+pub async fn batch_verify(ctx: &Context, member: Member) {
+    let (guild_id, user_id) = (member.guild_id, member.user.id);
+    if is_verified(user_id, guild_id).await.is_some() {
+        if let Some(role) = get_role_id(guild_id).await {
+            if let Err(e) = ctx
+                .http
+                .add_member_role(guild_id.0, user_id.0, role.0, None)
+                .await
+            {
+                eprintln!("{e}");
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 struct Verified {
     pub verified: bool,
     #[serde(rename = "roleId")]
@@ -120,64 +134,22 @@ struct Verified {
     pub discord_linked_date: Timestamp,
 }
 
-static CLIENT: Lazy<Client> = Lazy::new(|| {
-    let mut headers = header::HeaderMap::new();
-    headers.insert(
-        "Authorization",
-        header::HeaderValue::from_str(&*format!(
-            "Authorization: {}",
-            env::var("API_KEY").expect("API_URL environment var has not been set.")
-        ))
-        .unwrap(),
-    );
-    ClientBuilder::new()
-        .default_headers(headers)
-        .build()
-        .unwrap()
-});
-
-#[derive(Serialize, Deserialize, Copy, Clone)]
-struct ServerInfo {
-    #[serde(rename = "roleId")]
-    pub role_id: RoleId,
-}
-
-#[cached(option = true)]
-async fn get_role_id(guild_id: GuildId) -> Option<RoleId> {
-    let resp = CLIENT
-        .get(
-            Url::parse_with_params(
-                &*(env::var("API_URL").expect("API_URL environment var has not been set.")
-                    + "api/v1/guild"),
-                &[("guildId", format!("{guild_id}"))],
-            )
-            .ok()?,
-        )
-        .send()
-        .await;
-
-    if let Ok(resp) = resp {
-        if resp.status().is_success() {
-            return Some(resp.json::<ServerInfo>().await.ok()?.role_id);
-        }
-    }
-    None
+#[derive(Copy, Clone, Serialize, Deserialize)]
+struct VerifiedReq {
+    #[serde(rename = "userId")]
+    pub user_id: UserId,
+    #[serde(rename = "guildId")]
+    pub guild_id: GuildId,
 }
 
 #[cached(key = "UserId", option = true, convert = r##"{user_id}"##)]
 async fn is_verified(user_id: UserId, guild_id: GuildId) -> Option<()> {
     let resp = CLIENT
         .get(
-            Url::parse_with_params(
-                &*(env::var("API_URL").expect("API_URL environment var has not been set.")
-                    + "api/v1/verified"),
-                &[
-                    ("userId", format!("{user_id}")),
-                    ("guildId", format!("{guild_id}")),
-                ],
-            )
-            .ok()?,
+            &*(env::var("API_URL").expect("API_URL environment var has not been set.")
+                + "api/v1/verified"),
         )
+        .json(&VerifiedReq { user_id, guild_id })
         .send()
         .await;
 
@@ -192,6 +164,38 @@ async fn is_verified(user_id: UserId, guild_id: GuildId) -> Option<()> {
                     return Some(());
                 }
             }
+        }
+    }
+    None
+}
+
+/// This is non-exhaustive.
+#[derive(Serialize, Deserialize, Copy, Clone)]
+struct ServerInfo {
+    #[serde(rename = "roleId")]
+    pub role_id: RoleId,
+}
+
+#[derive(Copy, Clone, Serialize, Deserialize)]
+struct ServerReq {
+    #[serde(rename = "guildId")]
+    pub guild_id: GuildId,
+}
+
+#[cached(option = true)]
+async fn get_role_id(guild_id: GuildId) -> Option<RoleId> {
+    let resp = CLIENT
+        .get(
+            env::var("API_URL").expect("API_URL environment var has not been set.")
+                + &*format!("api/v1/guild/{guild_id}"),
+        )
+        .json(&ServerReq { guild_id })
+        .send()
+        .await;
+
+    if let Ok(resp) = resp {
+        if resp.status().is_success() {
+            return Some(resp.json::<ServerInfo>().await.ok()?.role_id);
         }
     }
     None

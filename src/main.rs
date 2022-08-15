@@ -45,17 +45,14 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
 
-        let commands;
-
-        if let Some(guild_id) = env::var("TEST_GUILD_ID")
+        let commands = if let Some(guild_id) = env::var("TEST_GUILD_ID")
             .ok()
             .map(|f| GuildId(f.parse().expect("TEST_GUILD_ID must be an integer.")))
         {
-            commands =
-                GuildId::set_application_commands(&guild_id, &ctx.http, create_commands).await;
+            GuildId::set_application_commands(&guild_id, &ctx.http, create_commands).await
         } else {
-            commands = Command::set_global_application_commands(&ctx, create_commands).await;
-        }
+            Command::set_global_application_commands(&ctx, create_commands).await
+        };
 
         println!("I now have the following slash commands: {:#?}", commands);
     }
