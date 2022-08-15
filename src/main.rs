@@ -28,7 +28,7 @@ fn create_commands(commands: &mut CreateApplicationCommands) -> &mut CreateAppli
         .create_application_command(|command| {
             command
                 .name("re-verify")
-                .description("Re-verifies everyone on the server, you must have the permissions to manage roles to use this command.")
+                .description("Re-verifies everyone on the server.")
                 .dm_permission(false)
                 .default_member_permissions(Permissions::MANAGE_ROLES)
         })
