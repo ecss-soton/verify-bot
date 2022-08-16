@@ -10,17 +10,18 @@ use serenity::client::Context;
 use serenity::futures::StreamExt;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::InteractionResponseType;
-use serenity::model::guild::Member;
 use serenity::model::prelude::{GuildId, RoleId, UserId};
 use serenity::model::Timestamp;
 use serenity::Error;
+
+use crate::TASK_LIST;
 
 static CLIENT: Lazy<Client> = Lazy::new(|| {
     let mut headers = header::HeaderMap::new();
     headers.insert(
         "Authorization",
         header::HeaderValue::from_str(
-            &*env::var("API_KEY").expect("API_URL environment var has not been set."),
+            &*env::var("API_KEY").expect("API_KEY environment var has not been set."),
         )
         .unwrap(),
     );
@@ -57,13 +58,19 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                 .await
         }
     } else {
+        TASK_LIST
+            .get()
+            .expect("OnceCell should be instantiated")
+            .send((command.user.id, guild_id))
+            .ok();
         command
             .create_interaction_response(ctx, |r| {
                 r.kind(InteractionResponseType::ChannelMessageWithSource)
                     .interaction_response_data(|d| {
                         d.ephemeral(true).content(format!(
                             "Please verify yourself by going to {}",
-                            env::var("API_URL").expect("API_URL environment var has not been set.")
+                            env::var("DISPLAY_URL")
+                                .expect("DISPLAY_URL environment var has not been set.")
                         ))
                     })
             })
@@ -84,7 +91,8 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
         while let Some(member) = members.next().await {
             // Filter all the members that have the verified role or are a bot.
             if !member.user.bot && !member.roles.iter().any(|r| r == &role) {
-                unordered.push(batch_verify(ctx, member));
+                let (guild_id, user_id) = (member.guild_id, member.user.id);
+                unordered.push(batch_verify(ctx, user_id, guild_id));
             }
         }
         {
@@ -107,9 +115,15 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
     Ok(())
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct IsVerified {
+    pub guild_id: GuildId,
+    pub user_id: UserId,
+    pub verified: bool,
+}
+
 /// Verifies multiple users, any errors are just printed.
-pub async fn batch_verify(ctx: &Context, member: Member) {
-    let (guild_id, user_id) = (member.guild_id, member.user.id);
+pub async fn batch_verify(ctx: &Context, user_id: UserId, guild_id: GuildId) -> IsVerified {
     if is_verified(user_id, guild_id).await.is_some() {
         if let Some(role) = get_role_id(guild_id).await {
             if let Err(e) = ctx
@@ -119,7 +133,17 @@ pub async fn batch_verify(ctx: &Context, member: Member) {
             {
                 eprintln!("{e}");
             }
+            return IsVerified {
+                guild_id,
+                user_id,
+                verified: true,
+            };
         }
+    }
+    IsVerified {
+        guild_id,
+        user_id,
+        verified: false,
     }
 }
 
@@ -147,7 +171,7 @@ async fn is_verified(user_id: UserId, guild_id: GuildId) -> Option<()> {
     let resp = CLIENT
         .get(
             &*(env::var("API_URL").expect("API_URL environment var has not been set.")
-                + "api/v1/verified"),
+                + "/api/v1/verified"),
         )
         .json(&VerifiedReq { user_id, guild_id })
         .send()
@@ -187,7 +211,7 @@ async fn get_role_id(guild_id: GuildId) -> Option<RoleId> {
     let resp = CLIENT
         .get(
             env::var("API_URL").expect("API_URL environment var has not been set.")
-                + &*format!("api/v1/guild/{guild_id}"),
+                + &*format!("/api/v1/guild/{guild_id}"),
         )
         .json(&ServerReq { guild_id })
         .send()

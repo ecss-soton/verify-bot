@@ -22,4 +22,5 @@ DISCORD_TOKEN="Your Discord Token"
 TEST_GUILD_ID="Guild Id"
 API_KEY="The API key for the Soton verify service"
 API_URL="The URL to that API"
+DISPLAY_URL="The URL to display to users for verification"
 ```

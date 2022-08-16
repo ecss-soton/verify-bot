@@ -1,19 +1,24 @@
-use crate::commands::{batch_verify, re_verify, verify};
+use std::collections::HashMap;
+use std::env;
+use std::time::Duration;
+
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use once_cell::sync::OnceCell;
+use serenity::builder::CreateApplicationCommands;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::Interaction;
-use std::env;
-
 use serenity::model::gateway::Ready;
-
 use serenity::model::guild::Member;
-
 use serenity::model::id::GuildId;
-
-use serenity::builder::CreateApplicationCommands;
 use serenity::model::prelude::command::Command;
+use serenity::model::prelude::UserId;
 use serenity::model::Permissions;
 use serenity::prelude::*;
 use serenity::{async_trait, Error};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+use crate::commands::{batch_verify, re_verify, verify};
 
 mod commands;
 
@@ -39,7 +44,13 @@ struct Handler;
 #[async_trait]
 impl EventHandler for Handler {
     async fn guild_member_addition(&self, ctx: Context, new_member: Member) {
-        batch_verify(&ctx, new_member).await
+        let (guild_id, user_id) = (new_member.guild_id, new_member.user.id);
+        batch_verify(&ctx, user_id, guild_id).await;
+        TASK_LIST
+            .get()
+            .expect("OnceCell should be instantiated")
+            .send((user_id, guild_id))
+            .ok();
     }
 
     async fn ready(&self, ctx: Context, ready: Ready) {
@@ -55,12 +66,16 @@ impl EventHandler for Handler {
         };
 
         println!("I now have the following slash commands: {:#?}", commands);
+
+        let (send, recv) = unbounded_channel();
+        TASK_LIST.set(send).expect("OnceCell has not yet been set.");
+        tokio::task::spawn(channel(ctx, recv));
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
             if let Err(why) = dispatch_commands(&ctx, command).await {
-                eprintln!("Cannot respond to slash command: {}", why);
+                eprintln!("Cannot respond to slash command: {:?}", why);
             }
         }
     }
@@ -80,6 +95,46 @@ async fn dispatch_commands(
         command => eprintln!("{command} command is not implemented."),
     };
     Ok(())
+}
+
+static TASK_LIST: OnceCell<UnboundedSender<(UserId, GuildId)>> = OnceCell::new();
+
+async fn channel(ctx: Context, mut rec: UnboundedReceiver<(UserId, GuildId)>) -> ! {
+    let ctx = &ctx;
+    let mut tries = HashMap::new();
+    let mut scheduled_tasks: Vec<(UserId, GuildId)> = vec![];
+    let mut task_list = FuturesUnordered::new();
+    const TRIES: i32 = 20;
+    const TIMEOUT: Duration = Duration::from_secs(15);
+    loop {
+        while let Ok(new_task) = rec.try_recv() {
+            if let Some(0) | None = tries.get(&new_task.0) {
+                // Only add a task if one doesn't already exist.
+                task_list.push(batch_verify(ctx, new_task.0, new_task.1))
+            }
+            tries.insert(new_task.0, TRIES);
+        }
+        for task in scheduled_tasks.drain(..) {
+            if let Some(0) | None = tries.get(&task.0) {
+                task_list.push(batch_verify(ctx, task.0, task.1))
+            }
+            tries.insert(task.0, TRIES);
+        }
+        while let Some(task) = task_list.next().await {
+            match tries.get_mut(&task.user_id).map(|t| {
+                *t -= 1;
+                *t
+            }) {
+                Some(0) | None => {}
+                Some(_) => {
+                    if !task.verified {
+                        scheduled_tasks.push((task.user_id, task.guild_id));
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(TIMEOUT).await;
+    }
 }
 
 #[tokio::main]
