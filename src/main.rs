@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::env;
 use std::time::Duration;
+use std::{env, mem};
 
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -69,7 +69,7 @@ impl EventHandler for Handler {
 
         let (send, recv) = unbounded_channel();
         TASK_LIST.set(send).expect("OnceCell has not yet been set.");
-        tokio::task::spawn(channel(ctx, recv));
+        tokio::task::spawn(check_for_verify(ctx, recv));
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
@@ -99,40 +99,39 @@ async fn dispatch_commands(
 
 static TASK_LIST: OnceCell<UnboundedSender<(UserId, GuildId)>> = OnceCell::new();
 
-async fn channel(ctx: Context, mut rec: UnboundedReceiver<(UserId, GuildId)>) -> ! {
+async fn check_for_verify(ctx: Context, mut rec: UnboundedReceiver<(UserId, GuildId)>) -> ! {
     let ctx = &ctx;
     let mut tries = HashMap::new();
-    let mut scheduled_tasks: Vec<(UserId, GuildId)> = vec![];
-    let mut task_list = FuturesUnordered::new();
-    const TRIES: i32 = 20;
-    const TIMEOUT: Duration = Duration::from_secs(15);
+    let mut task_list_a = FuturesUnordered::new();
+    let mut task_list_b = FuturesUnordered::new();
+    const TRIES: i32 = 60;
+    const TIMEOUT: Duration = Duration::from_secs(3);
     loop {
         while let Ok(new_task) = rec.try_recv() {
             if let Some(0) | None = tries.get(&new_task.0) {
                 // Only add a task if one doesn't already exist.
-                task_list.push(batch_verify(ctx, new_task.0, new_task.1))
+                task_list_a.push(batch_verify(ctx, new_task.0, new_task.1))
             }
             tries.insert(new_task.0, TRIES);
         }
-        for task in scheduled_tasks.drain(..) {
-            if let Some(0) | None = tries.get(&task.0) {
-                task_list.push(batch_verify(ctx, task.0, task.1))
-            }
-            tries.insert(task.0, TRIES);
-        }
-        while let Some(task) = task_list.next().await {
+
+        while let Some(task) = task_list_a.next().await {
             match tries.get_mut(&task.user_id).map(|t| {
                 *t -= 1;
                 *t
             }) {
-                Some(0) | None => {}
+                Some(0) | None => {
+                    tries.remove(&task.user_id);
+                }
                 Some(_) => {
                     if !task.verified {
-                        scheduled_tasks.push((task.user_id, task.guild_id));
+                        task_list_b.push(batch_verify(ctx, task.user_id, task.guild_id));
                     }
                 }
             }
         }
+        mem::swap(&mut task_list_a, &mut task_list_b);
+        // b will now drained and a will contain the scheduled futures
         tokio::time::sleep(TIMEOUT).await;
     }
 }
