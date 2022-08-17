@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Context as ContextTrait, Result};
 use std::collections::HashMap;
 use std::time::Duration;
 use std::{env, mem};
@@ -5,6 +6,7 @@ use std::{env, mem};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
+use serenity::async_trait;
 use serenity::builder::CreateApplicationCommands;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::Interaction;
@@ -15,7 +17,6 @@ use serenity::model::prelude::command::Command;
 use serenity::model::prelude::UserId;
 use serenity::model::Permissions;
 use serenity::prelude::*;
-use serenity::{async_trait, Error};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::commands::{batch_verify, re_verify, verify};
@@ -65,7 +66,14 @@ impl EventHandler for Handler {
             Command::set_global_application_commands(&ctx, create_commands).await
         };
 
-        println!("I now have the following slash commands: {:#?}", commands);
+        match commands.context("Unable to create commands.") {
+            Ok(commands) => {
+                println!("I now have the following slash commands: {commands:#?}")
+            }
+            Err(e) => {
+                eprintln!("{e:?}")
+            }
+        }
 
         let (send, recv) = unbounded_channel();
         TASK_LIST.set(send).expect("OnceCell has not yet been set.");
@@ -75,26 +83,20 @@ impl EventHandler for Handler {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
             if let Err(why) = dispatch_commands(&ctx, command).await {
-                eprintln!("Cannot respond to slash command: {:?}", why);
+                eprintln!("{why:?}");
             }
         }
     }
 }
 
-async fn dispatch_commands(
-    ctx: &Context,
-    command: ApplicationCommandInteraction,
-) -> Result<(), Error> {
+async fn dispatch_commands(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
     match command.data.name.as_str() {
-        "verify" => {
-            verify(ctx, command).await?;
-        }
-        "re-verify" => {
-            re_verify(ctx, command).await?;
-        }
-        command => eprintln!("{command} command is not implemented."),
-    };
-    Ok(())
+        "verify" => verify(ctx, command).await.context("Ran verify command."),
+        "re-verify" => re_verify(ctx, command)
+            .await
+            .context("Ran re-verify command."),
+        command => Err(anyhow!("{command} command is not implemented.")),
+    }
 }
 
 static TASK_LIST: OnceCell<UnboundedSender<(UserId, GuildId)>> = OnceCell::new();
