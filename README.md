@@ -1,26 +1,74 @@
-# verify-bot
+# University of Southampton verification Discord bot
 
-A bot to interact with the global verification API to verify users in University of Southampton related discord servers.
+A bot to interact with the [global verification API](https://github.com/ecss-soton/verify) to verify users in University of Southampton related discord servers.
 
-# Commands
+## How to set up the bot
 
-## verify
+1) [Invite](https://discord.com/api/oauth2/authorize?client_id=1004433125968969890&permissions=268435456&scope=bot) the bot
+2) Run /setup
+3) Enjoy easy verification of your members!
+
+### How it all works
+
+With this service users can verify themselves once on the website and then never have to verify again! We store who is verified and who isn't in our database and then whenever you run /verify or join a server we will give you that servers verified role!
+
+## Commands
+
+### /verify
 
 Verifies you or tells you how to verify.
 
-## re-verify
+### /re-verify
 
-Will batch verify everyone on the server, for this command to work you must be an admin.
+Will batch verify everyone on the server. **Admin only**
 
-# Getting Started
+### /setup
 
-To get started create a .env file at the project root with the following details:
+Sets up the bot. **Admin only**
+
+## Run Locally
+
+Make sure you have [rust installed](https://www.rust-lang.org/tools/install). You can check this with `rustc -V`
+
+Clone the project
+
+```bash
+  git clone https://github.com/ecss-soton/verify-bot.git
+```
+
+Go to the project directory
+
+```bash
+  cd verify-bot
+```
+
+Configure the environment variables. See [Environment Variables]
+
+Start the bot
+
+```bash
+  cargo run --release
+```
+
+### Environment Variables
+
+Create a .env file at the project root and fill it with the following variables
+
+A list of these can also be seen in [.env.example](./.env.example)
 
 ```bash
 DISCORD_TOKEN="Your Discord Token"
 # This is only necessary if you want to only update the guild commands and not the global ones.
 TEST_GUILD_ID="Guild Id"
+# Contact the ECSS web officer to get access to an API Key
 API_KEY="The API key for the Soton verify service"
 API_URL="The URL to that API"
 DISPLAY_URL="The URL to display to users for verification"
 ```
+
+### Docker image
+
+TODO Add docker image link with dockerfile
+
+## Running Tests
+
