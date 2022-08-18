@@ -106,11 +106,15 @@ impl EventHandler for Handler {
 
 async fn dispatch_commands(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
     match command.data.name.as_str() {
-        "verify" => verify(ctx, command).await.context("Ran verify command."),
+        "verify" => verify(ctx, command)
+            .await
+            .context("Failed to run verify command."),
         "re-verify" => re_verify(ctx, command)
             .await
             .context("Ran re-verify command."),
-        "setup" => setup(ctx, command).await.context("Ran setup command."),
+        "setup" => setup(ctx, command)
+            .await
+            .context("Failed to run setup command"),
         "setup-modal" => Ok(()),
         command => Err(anyhow!("{command} command is not implemented.")),
     }

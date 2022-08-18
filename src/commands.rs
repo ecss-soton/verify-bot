@@ -1,7 +1,6 @@
 use std::env;
 use std::time::Duration;
 
-use crate::commands::api::{register_guild, RegisterParams};
 use anyhow::Result;
 use anyhow::{anyhow, bail, ensure, Context as ContextTrait};
 use cached::Cached;
@@ -20,6 +19,7 @@ use serenity::model::guild::{PartialGuild, Role};
 use serenity::model::prelude::interaction::modal::ModalSubmitInteraction;
 use serenity::model::prelude::{GuildId, UserId};
 
+use crate::commands::api::{register_guild, RegisterParams};
 use crate::TASK_LIST;
 
 mod api;
@@ -254,7 +254,7 @@ async fn get_verified_role(
     let bot_position = bot
         .roles
         .iter()
-        .filter_map(|r| r.to_role_cached(ctx).map(|r| r.position))
+        .filter_map(|r| partial_guild.roles.get(r).map(|r| r.position))
         .max();
 
     match command.data.options.get(0).and_then(|o| o.resolved.clone()) {
@@ -265,13 +265,24 @@ async fn get_verified_role(
                     command.create_interaction_response(ctx,
                         |r| {
                             r.kind(InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data( | d | {
-                                d.content("Unable to use the verified role, please make sure my role has higher permissions than the verified role.")
-                            })
+                                .interaction_response_data(|d| {
+                                    d.content("Unable to use the verified role, please make sure my role has higher permissions than the verified role.")
+                                })
                         })
                         .await?;
                     bail!("verified role ({role}) has higher position than bot role.")
                 }
+            }
+            if role.id.0 == guild_id.0 {
+                command.create_interaction_response(ctx,
+                    |r| {
+                        r.kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|d| {
+                                d.content("Unable to use the verified role, please stop trying to crash this bot by using @everyone.")
+                            })
+                    })
+                    .await?;
+                bail!("verified role ({role}) is @everyone.")
             }
         }
         _ => bail!("Unable to get option info."),
@@ -335,12 +346,15 @@ async fn modal_response(
                 return Err(anyhow!(
                     "Received unrecognized id {ar:?} from modal component."
                 ))
-                .context("Error incorrect modal response.")
+                .context("Error incorrect modal response.");
             }
         }
     }
     let name = name.ok_or_else(|| anyhow!("name was not sent."))?;
-    let susu_link = match susu.map(|s| Url::parse(&*s)) {
+    let susu_link = match susu
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| Url::parse(&*s))
+    {
         Some(Err(e)) => {
             return Err(e).context("Unable to parse susu link, please make sure it is a url.");
         }
@@ -351,7 +365,7 @@ async fn modal_response(
         .context("Unable to parse invite link, please make sure it is a url.")?;
 
     let resp = register_guild(RegisterParams {
-        id: partial_guild.id,
+        guild_id: partial_guild.id,
         name,
         icon: partial_guild.icon,
         created_at: partial_guild.id.created_at(),
@@ -371,6 +385,6 @@ async fn modal_response(
     Ok(if resp.approved {
         "Successfully set the server up!"
     } else {
-        "Successfully set the server up! Please contact an admin to get your server approved."
+        "Successfully set the server up! Please contact the ECSS web officer to get your server approved."
     })
 }

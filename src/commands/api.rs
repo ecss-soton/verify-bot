@@ -15,12 +15,12 @@ use serenity::utils::Colour;
 use std::env;
 use thiserror::Error;
 
-#[derive(Error, Debug, Copy, Clone)]
-enum AuthError {
+#[derive(Error, Debug)]
+enum ParamError {
     #[error("Incorrect Authorization header.")]
-    Incorrect,
-    #[error("Missing Authorization header")]
-    None,
+    IncorrectAuth,
+    #[error("Incorrect parameters: {0:?}.")]
+    InvalidParams(reqwest::Result<String>),
 }
 
 static CLIENT: Lazy<Client> = Lazy::new(|| {
@@ -82,8 +82,8 @@ pub async fn is_verified(user_id: UserId, guild_id: GuildId) -> Result<()> {
         404 => Err(anyhow!(
             "User ({params:?}) does not exist or is not verified."
         )),
-        401 => Err(AuthError::Incorrect.into()),
-        400 => Err(AuthError::None.into()),
+        401 => Err(ParamError::IncorrectAuth.into()),
+        400 => Err(ParamError::InvalidParams(resp.text().await).into()),
         _ => Err(anyhow!("Unknown error: {resp:?}")),
     }
 }
@@ -118,22 +118,19 @@ pub async fn get_role_id(guild_id: GuildId) -> Result<RoleId> {
     match resp.status().into() {
         200 => {
             let resp = resp.json::<Guild>().await?;
-            ensure!(
-                resp.approved,
-                "Guild with id of {guild_id} has not been approved."
-            );
             Ok(resp.role_id)
         }
         404 => Err(anyhow!("Guild with id of {guild_id} does not exist.")),
-        401 => Err(AuthError::Incorrect.into()),
-        400 => Err(AuthError::None.into()),
+        401 => Err(ParamError::IncorrectAuth.into()),
+        400 => Err(ParamError::InvalidParams(resp.text().await).into()),
         _ => Err(anyhow!("Unknown error: {resp:?}")),
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RegisterParams {
-    pub id: GuildId,
+    #[serde(rename = "guildId")]
+    pub guild_id: GuildId,
     pub name: String,
     pub icon: Option<String>,
     #[serde(rename = "createdAt")]
@@ -172,10 +169,10 @@ pub async fn register_guild(info: RegisterParams) -> Result<Register> {
         200 => Ok(resp.json::<Register>().await?),
         409 => Err(anyhow!(
             "Guild with id of {} has already been registered.",
-            info.id
+            info.guild_id
         )),
-        401 => Err(AuthError::Incorrect.into()),
-        400 => Err(AuthError::None.into()),
+        401 => Err(ParamError::IncorrectAuth.into()),
+        400 => Err(ParamError::InvalidParams(resp.text().await).into()),
         _ => Err(anyhow!("Unknown error: {resp:?}")),
     }
 }
