@@ -1,13 +1,23 @@
 use std::env;
+use std::time::Duration;
 
-use anyhow::Context as ContextTrait;
+use crate::commands::api::{register_guild, RegisterParams};
 use anyhow::Result;
+use anyhow::{anyhow, bail, ensure, Context as ContextTrait};
 use cached::Cached;
 use futures::stream::FuturesUnordered;
+use reqwest::Url;
 use serenity::client::Context;
+use serenity::collector::{ModalInteractionCollector, ModalInteractionCollectorBuilder};
 use serenity::futures::StreamExt;
-use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
+use serenity::model::application::component::ActionRowComponent::InputText;
+use serenity::model::application::component::InputTextStyle;
+use serenity::model::application::interaction::application_command::{
+    ApplicationCommandInteraction, CommandDataOptionValue,
+};
 use serenity::model::application::interaction::InteractionResponseType;
+use serenity::model::guild::{PartialGuild, Role};
+use serenity::model::prelude::interaction::modal::ModalSubmitInteraction;
 use serenity::model::prelude::{GuildId, UserId};
 
 use crate::TASK_LIST;
@@ -40,7 +50,7 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                             .create_interaction_response(ctx, |r| {
                                 r.kind(InteractionResponseType::ChannelMessageWithSource)
                                     .interaction_response_data(|d| {
-                                        d.content(concat!("I was unable to add the verified role, please make sure my role has higher permissions than the verified role."))
+                                        d.content("I was unable to add the verified role, please make sure my role has higher permissions than the verified role.")
                                     })
                             })
                             .await?;
@@ -53,7 +63,7 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                     .create_interaction_response(ctx, |r| {
                         r.kind(InteractionResponseType::ChannelMessageWithSource)
                             .interaction_response_data(|d| {
-                                d.content(concat!("It looks like your server doesn't support this bot, please contact the admins."))
+                                d.content("It looks like your server doesn't support this bot, please contact the admins.")
                             })
                     })
                     .await?;
@@ -109,7 +119,7 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
             while (unordered.next().await).is_some() {}
             command
                 .edit_original_interaction_response(ctx, |r| {
-                    r.content(concat!("Successfully completed re-verifications."))
+                    r.content("Successfully completed re-verifications.")
                 })
                 .await?;
             Ok(())
@@ -117,7 +127,7 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
         Err(e) => {
             command
                 .edit_original_interaction_response(ctx, |r| {
-                    r.content(concat!("It looks like your server doesn't support this bot, please contact the admins."))
+                    r.content("It looks like your server doesn't support this bot, please contact the admins.")
                 })
                 .await?;
             Err(e)
@@ -162,4 +172,205 @@ pub async fn batch_verify(ctx: &Context, user_id: UserId, guild_id: GuildId) -> 
         user_id,
         verified: false,
     }
+}
+
+async fn create_modal(
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+    partial_guild: &PartialGuild,
+) -> Result<ModalInteractionCollector> {
+    command
+        .create_interaction_response(ctx, |r| {
+            r.kind(InteractionResponseType::Modal)
+                .interaction_response_data(|m| {
+                    m.components(|c| {
+                        c.create_action_row(|a| {
+                            a.create_input_text(|t| {
+                                t.required(true)
+                                    .label("Server Name")
+                                    .value(&*partial_guild.name)
+                                    .style(InputTextStyle::Short)
+                                    .custom_id("name")
+                            })
+                        })
+                        .create_action_row(|a| {
+                            a.create_input_text(|t| {
+                                t.required(true)
+                                    .label("Invite Link")
+                                    .placeholder("https://discord.com/invite/9SYG22wR4V")
+                                    .style(InputTextStyle::Short)
+                                    .custom_id("invite")
+                            })
+                        })
+                        .create_action_row(|a| {
+                            a.create_input_text(|t| {
+                                t.required(false)
+                                    .label("SUSU Link")
+                                    .placeholder("https://www.susu.org/groups/ecss")
+                                    .style(InputTextStyle::Short)
+                                    .custom_id("susu")
+                            })
+                        })
+                    })
+                    .custom_id("setup-modal")
+                    .title("Setup Your Server")
+                })
+        })
+        .await?;
+
+    Ok(ModalInteractionCollectorBuilder::new(ctx)
+        .guild_id(command.guild_id.unwrap())
+        .author_id(command.user.id)
+        .collect_limit(1)
+        .timeout(Duration::from_secs(60 * 15))
+        .filter(|modal| modal.data.custom_id == "setup-modal")
+        .build())
+}
+
+async fn get_verified_role(
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+    partial_guild: &PartialGuild,
+) -> Result<Role> {
+    let guild_id = command.guild_id.unwrap();
+    let bot = guild_id.member(ctx, ctx.cache.current_user_id()).await?;
+
+    if partial_guild
+        .member_permissions(ctx, ctx.cache.current_user_id())
+        .await
+        .map_or(false, |p| !p.manage_roles())
+    {
+        command
+            .create_interaction_response(ctx, |r| {
+                r.kind(InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|d| {
+                        d.content("Please make sure I have the permissions to manage roles.")
+                    })
+            })
+            .await?;
+        bail!("Not given permission to manage roles.")
+    }
+    let role;
+    let bot_position = bot
+        .roles
+        .iter()
+        .filter_map(|r| r.to_role_cached(ctx).map(|r| r.position))
+        .max();
+
+    match command.data.options.get(0).and_then(|o| o.resolved.clone()) {
+        Some(CommandDataOptionValue::Role(r)) => {
+            role = r;
+            if let Some(position) = bot_position {
+                if role.position > position {
+                    command.create_interaction_response(ctx,
+                        |r| {
+                            r.kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data( | d | {
+                                d.content("Unable to use the verified role, please make sure my role has higher permissions than the verified role.")
+                            })
+                        })
+                        .await?;
+                    bail!("verified role ({role}) has higher position than bot role.")
+                }
+            }
+        }
+        _ => bail!("Unable to get option info."),
+    }
+
+    Ok(role)
+}
+
+pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
+    let partial_guild = command.guild_id.unwrap().to_partial_guild(ctx).await?;
+    let verified = get_verified_role(ctx, &command, &partial_guild)
+        .await
+        .context("Tried getting verified role.")?;
+
+    let command = create_modal(ctx, &command, &partial_guild)
+        .await
+        .context("creating modal")?
+        .next()
+        .await
+        .ok_or_else(|| anyhow!("Did not receive response"))?;
+
+    match modal_response(&command, verified, partial_guild).await {
+        Ok(c) => {
+            command
+                .create_interaction_response(ctx, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|d| d.content(c))
+                })
+                .await?;
+            Ok(())
+        }
+        Err(e) => {
+            command
+                .create_interaction_response(ctx, |r| {
+                    r.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|d| d.content(format!("{e}")))
+                })
+                .await?;
+            Err(e).context("Error when responding to modal.")
+        }
+    }
+}
+
+async fn modal_response(
+    command: &ModalSubmitInteraction,
+    verified: Role,
+    partial_guild: PartialGuild,
+) -> Result<&'static str> {
+    let (mut name, mut susu, mut invite) = (None, None, None);
+    for t in command
+        .data
+        .components
+        .iter()
+        .filter_map(|a| a.components.get(0))
+    {
+        match t {
+            InputText(t) if t.custom_id == "name" => name = Some(t.value.clone()),
+            InputText(t) if t.custom_id == "susu" => susu = Some(t.value.clone()),
+            InputText(t) if t.custom_id == "invite" => invite = Some(t.value.clone()),
+            ar => {
+                return Err(anyhow!(
+                    "Received unrecognized id {ar:?} from modal component."
+                ))
+                .context("Error incorrect modal response.")
+            }
+        }
+    }
+    let name = name.ok_or_else(|| anyhow!("name was not sent."))?;
+    let susu_link = match susu.map(|s| Url::parse(&*s)) {
+        Some(Err(e)) => {
+            return Err(e).context("Unable to parse susu link, please make sure it is a url.");
+        }
+        Some(Ok(l)) => Some(l),
+        None => None,
+    };
+    let invite_link = Url::parse(&*invite.ok_or_else(|| anyhow!("invite was not sent."))?)
+        .context("Unable to parse invite link, please make sure it is a url.")?;
+
+    let resp = register_guild(RegisterParams {
+        id: partial_guild.id,
+        name,
+        icon: partial_guild.icon,
+        created_at: partial_guild.id.created_at(),
+        owner_id: partial_guild.owner_id,
+        susu_link,
+        invite_link,
+        role_id: verified.id,
+        role_name: verified.name,
+        role_colour: verified.colour,
+    })
+    .await
+    .context("Could not register guild, are you sure you haven't already registered?")?;
+
+    // bail if registered is not true
+    ensure!(resp.registered, "Error guild info was not saved to the db");
+    // If approved is true
+    Ok(if resp.approved {
+        "Successfully set the server up!"
+    } else {
+        "Successfully set the server up! Please contact an admin to get your server approved."
+    })
 }

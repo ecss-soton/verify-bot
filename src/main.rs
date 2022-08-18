@@ -8,6 +8,7 @@ use futures::StreamExt;
 use once_cell::sync::OnceCell;
 use serenity::async_trait;
 use serenity::builder::CreateApplicationCommands;
+use serenity::model::application::command::CommandOptionType;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::Interaction;
 use serenity::model::gateway::Ready;
@@ -19,7 +20,7 @@ use serenity::model::Permissions;
 use serenity::prelude::*;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::commands::{batch_verify, re_verify, verify};
+use crate::commands::{batch_verify, re_verify, setup, verify};
 
 mod commands;
 
@@ -37,6 +38,20 @@ fn create_commands(commands: &mut CreateApplicationCommands) -> &mut CreateAppli
                 .description("Re-verifies everyone on the server.")
                 .dm_permission(false)
                 .default_member_permissions(Permissions::MANAGE_ROLES)
+        })
+        .create_application_command(|command| {
+            command
+                .name("setup")
+                .description("Sets your server up so that users can be verified.")
+                .dm_permission(false)
+                .default_member_permissions(Permissions::ADMINISTRATOR)
+                .create_option(|option| {
+                    option
+                        .name("role")
+                        .description("The role you will be using to mark people as verified.")
+                        .required(true)
+                        .kind(CommandOptionType::Role)
+                })
         })
 }
 
@@ -95,6 +110,8 @@ async fn dispatch_commands(ctx: &Context, command: ApplicationCommandInteraction
         "re-verify" => re_verify(ctx, command)
             .await
             .context("Ran re-verify command."),
+        "setup" => setup(ctx, command).await.context("Ran setup command."),
+        "setup-modal" => Ok(()),
         command => Err(anyhow!("{command} command is not implemented.")),
     }
 }

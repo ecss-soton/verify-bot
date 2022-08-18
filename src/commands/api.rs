@@ -131,7 +131,7 @@ pub async fn get_role_id(guild_id: GuildId) -> Result<RoleId> {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RegisterParams {
     pub id: GuildId,
     pub name: String,
