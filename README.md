@@ -4,7 +4,7 @@ A bot to interact with the [global verification API](https://github.com/ecss-sot
 
 ## How to set up the bot
 
-1) [Invite](https://discord.com/api/oauth2/authorize?client_id=1004433125968969890&permissions=268435456&scope=bot) the bot
+1) [Invite](https://society.ecs.soton.ac.uk/verify-invite) the bot
 2) Run /setup
 3) Enjoy easy verification of your members!
 
@@ -28,7 +28,7 @@ Sets up the bot. **Admin only**
 
 ## Run Locally
 
-Make sure you have [rust installed](https://www.rust-lang.org/tools/install). You can check this with `rustc -V`
+Make sure you have [rust installed](https://www.rust-lang.org/tools/install). You can check this with `cargo -V`
 
 Clone the project
 
