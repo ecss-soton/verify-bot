@@ -4,7 +4,9 @@ use std::time::Duration;
 use anyhow::Result;
 use anyhow::{anyhow, bail, ensure, Context as ContextTrait};
 use cached::Cached;
+use futures::join;
 use futures::stream::FuturesUnordered;
+use log::warn;
 use reqwest::Url;
 use serenity::client::Context;
 use serenity::collector::{ModalInteractionCollector, ModalInteractionCollectorBuilder};
@@ -26,13 +28,20 @@ mod api;
 
 pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
     let guild_id = command.guild_id.unwrap();
-    match api::is_verified(command.user.id, guild_id).await {
-        Ok(()) => match api::get_role_id(guild_id).await {
+    match api::is_verified(command.user.id, guild_id)
+        .await
+        .context(concat!(file!(), ":", line!()))
+    {
+        Ok(()) => match api::get_role_id(guild_id)
+            .await
+            .context(concat!(file!(), ":", line!()))
+        {
             Ok(role) => {
                 match ctx
                     .http
                     .add_member_role(command.guild_id.unwrap().0, command.user.id.0, role.0, None)
                     .await
+                    .context(concat!(file!(), ":", line!()))
                 {
                     Ok(_) => {
                         command
@@ -42,7 +51,8 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                                         d.ephemeral(true).content("You have now been verified!")
                                     })
                             })
-                            .await?;
+                            .await
+                            .context(concat!(file!(), ":", line!()))?;
                         Ok(())
                     }
                     Err(e) => {
@@ -53,7 +63,7 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                                         d.content("I was unable to add the verified role, please make sure my role has higher permissions than the verified role.")
                                     })
                             })
-                            .await?;
+                            .await.context(concat!(file!(), ":", line!()))?;
                         Err(e).context("Could not add verified role.")
                     }
                 }
@@ -66,7 +76,7 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                                 d.content("It looks like your server doesn't support this bot, please contact the admins.")
                             })
                     })
-                    .await?;
+                    .await.context(concat!(file!(), ":", line!()))?;
                 Err(e)
             }
         },
@@ -88,7 +98,8 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                             ))
                         })
                 })
-                .await?;
+                .await
+                .context(concat!(file!(), ":", line!()))?;
             e
         }
     }
@@ -97,8 +108,9 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
 /// Re-verifies an entire server (This only adds verified people), also invalidates guild role cache
 pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
     let guild_id = command.guild_id.unwrap();
-    command.defer(ctx).await?;
-    match api::get_role_id(guild_id).await {
+    let (defer, role_id) = join!(command.defer(ctx), api::get_role_id(guild_id));
+    defer.context(concat!(file!(), ":", line!()))?;
+    match role_id.context(concat!(file!(), ":", line!())) {
         Ok(role) => {
             let mut members = guild_id
                 .members_iter(ctx)
@@ -121,7 +133,8 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
                 .edit_original_interaction_response(ctx, |r| {
                     r.content("Successfully completed re-verifications.")
                 })
-                .await?;
+                .await
+                .context(concat!(file!(), ":", line!()))?;
             Ok(())
         }
         Err(e) => {
@@ -129,7 +142,7 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
                 .edit_original_interaction_response(ctx, |r| {
                     r.content("It looks like your server doesn't support this bot, please contact the admins.")
                 })
-                .await?;
+                .await.context(concat!(file!(), ":", line!()))?;
             Err(e)
         }
     }
@@ -144,17 +157,21 @@ pub struct IsVerified {
 
 /// Verifies multiple users, any errors are just printed.
 pub async fn batch_verify(ctx: &Context, user_id: UserId, guild_id: GuildId) -> IsVerified {
-    match api::is_verified(user_id, guild_id).await.context(format!(
-        "Could not batch verify user with id {user_id} in the guild with id {guild_id}"
-    )) {
+    match api::is_verified(user_id, guild_id)
+        .await
+        .context(concat!(file!(), ":", line!()))
+        .context(format!(
+            "Could not batch verify user with id {user_id} in the guild with id {guild_id}"
+        )) {
         Ok(()) => {
             if let Ok(role) = api::get_role_id(guild_id).await {
                 if let Err(e) = ctx
                     .http
                     .add_member_role(guild_id.0, user_id.0, role.0, None)
                     .await
+                    .context(concat!(file!(), ":", line!()))
                 {
-                    eprintln!("Could not add verified role. {e:?}");
+                    warn!("Could not add verified role. {e:?}");
                 }
                 return IsVerified {
                     guild_id,
@@ -164,7 +181,7 @@ pub async fn batch_verify(ctx: &Context, user_id: UserId, guild_id: GuildId) -> 
             }
         }
         Err(e) => {
-            eprintln!("{e:?}");
+            warn!("{e:?}");
         }
     }
     IsVerified {
@@ -216,7 +233,8 @@ async fn create_modal(
                     .title("Setup Your Server")
                 })
         })
-        .await?;
+        .await
+        .context(concat!(file!(), ":", line!()))?;
 
     Ok(ModalInteractionCollectorBuilder::new(ctx)
         .guild_id(command.guild_id.unwrap())
@@ -233,13 +251,13 @@ async fn get_verified_role(
     partial_guild: &PartialGuild,
 ) -> Result<Role> {
     let guild_id = command.guild_id.unwrap();
-    let bot = guild_id.member(ctx, ctx.cache.current_user_id()).await?;
+    let (bot, permissions) = join!(
+        guild_id.member(ctx, ctx.cache.current_user_id()),
+        partial_guild.member_permissions(ctx, ctx.cache.current_user_id())
+    );
+    let bot = bot?;
 
-    if partial_guild
-        .member_permissions(ctx, ctx.cache.current_user_id())
-        .await
-        .map_or(false, |p| !p.manage_roles())
-    {
+    if permissions.map_or(false, |p| !p.manage_roles()) {
         command
             .create_interaction_response(ctx, |r| {
                 r.kind(InteractionResponseType::ChannelMessageWithSource)
@@ -247,7 +265,8 @@ async fn get_verified_role(
                         d.content("Please make sure I have the permissions to manage roles.")
                     })
             })
-            .await?;
+            .await
+            .context(concat!(file!(), ":", line!()))?;
         bail!("Not given permission to manage roles.")
     }
     let role;
@@ -269,7 +288,7 @@ async fn get_verified_role(
                                     d.content("Unable to use the verified role, please make sure my role has higher permissions than the verified role.")
                                 })
                         })
-                        .await?;
+                        .await.context(concat!(file!(), ":", line!()))?;
                     bail!("verified role ({role}) has higher position than bot role.")
                 }
             }
@@ -281,7 +300,7 @@ async fn get_verified_role(
                                 d.content("Unable to use the verified role, please stop trying to crash this bot by using @everyone.")
                             })
                     })
-                    .await?;
+                    .await.context(concat!(file!(), ":", line!()))?;
                 bail!("verified role ({role}) is @everyone.")
             }
         }
@@ -295,10 +314,12 @@ pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Res
     let partial_guild = command.guild_id.unwrap().to_partial_guild(ctx).await?;
     let verified = get_verified_role(ctx, &command, &partial_guild)
         .await
+        .context(concat!(file!(), ":", line!()))
         .context("Tried getting verified role.")?;
 
     let command = create_modal(ctx, &command, &partial_guild)
         .await
+        .context(concat!(file!(), ":", line!()))
         .context("creating modal")?
         .next()
         .await
@@ -311,7 +332,8 @@ pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Res
                     r.kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|d| d.content(c))
                 })
-                .await?;
+                .await
+                .context(concat!(file!(), ":", line!()))?;
             Ok(())
         }
         Err(e) => {
@@ -320,7 +342,8 @@ pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Res
                     r.kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|d| d.content(format!("{e}")))
                 })
-                .await?;
+                .await
+                .context(concat!(file!(), ":", line!()))?;
             Err(e).context("Error when responding to modal.")
         }
     }
@@ -377,6 +400,7 @@ async fn modal_response(
         role_colour: verified.colour,
     })
     .await
+    .context(concat!(file!(), ":", line!()))
     .context("Could not register guild, are you sure you haven't already registered?")?;
 
     // bail if registered is not true

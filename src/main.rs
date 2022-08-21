@@ -5,6 +5,7 @@ use std::{env, mem};
 
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use log::{info, warn};
 use once_cell::sync::OnceCell;
 use serenity::async_trait;
 use serenity::builder::CreateApplicationCommands;
@@ -70,7 +71,7 @@ impl EventHandler for Handler {
     }
 
     async fn ready(&self, ctx: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
+        info!("{} is connected!", ready.user.name);
 
         let commands = if let Some(guild_id) = env::var("TEST_GUILD_ID")
             .ok()
@@ -83,10 +84,10 @@ impl EventHandler for Handler {
 
         match commands.context("Unable to create commands.") {
             Ok(commands) => {
-                println!("I now have the following slash commands: {commands:#?}")
+                info!("I now have the following slash commands: {commands:#?}")
             }
             Err(e) => {
-                eprintln!("{e:?}")
+                warn!("{e:?}")
             }
         }
 
@@ -97,8 +98,10 @@ impl EventHandler for Handler {
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
+            let guild = command.guild_id.unwrap();
+            let user = command.user.id;
             if let Err(why) = dispatch_commands(&ctx, command).await {
-                eprintln!("{why:?}");
+                warn!("Command failure in guild with id {guild} from user with id {user}: {why:?}");
             }
         }
     }
@@ -161,6 +164,10 @@ async fn check_for_verify(ctx: Context, mut rec: UnboundedReceiver<(UserId, Guil
 
 #[tokio::main]
 async fn main() {
+    let config_str = include_str!("./../log4rs.yml");
+    let config = serde_yaml::from_str(config_str).unwrap();
+    log4rs::init_raw_config(config).unwrap();
+
     dotenv::dotenv().ok();
     let token = env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN environment var has not been set.");
 
@@ -170,6 +177,6 @@ async fn main() {
         .expect("Error creating client");
 
     if let Err(why) = client.start().await {
-        eprintln!("Client error: {:?}", why);
+        warn!("Client error: {:?}", why);
     }
 }
