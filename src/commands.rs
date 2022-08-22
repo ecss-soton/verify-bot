@@ -108,6 +108,10 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
 /// Re-verifies an entire server (This only adds verified people), also invalidates guild role cache
 pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
     let guild_id = command.guild_id.unwrap();
+    {
+        let mut cache = api::GET_ROLE_ID.lock().await;
+        cache.cache_remove(&guild_id);
+    }
     let (defer, role_id) = join!(command.defer(ctx), api::get_role_id(guild_id));
     defer.context(concat!(file!(), ":", line!()))?;
     match role_id.context(concat!(file!(), ":", line!())) {
@@ -121,17 +125,22 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
                 // Filter all the members that have the verified role or are a bot.
                 if !member.user.bot && !member.roles.iter().any(|r| r == &role) {
                     let (guild_id, user_id) = (member.guild_id, member.user.id);
-                    unordered.push(batch_verify(ctx, user_id, guild_id));
+                    unordered.push(silent_verify(ctx, user_id, guild_id));
                 }
             }
-            {
-                let mut cache = api::GET_ROLE_ID.lock().await;
-                cache.cache_remove(&guild_id);
+            let mut num_verified = 0;
+            while let Some(verified) = unordered.next().await {
+                if verified.verified {
+                    num_verified += 1;
+                }
             }
-            while (unordered.next().await).is_some() {}
+            let members = match num_verified {
+                1 => "member",
+                _ => "members",
+            };
             command
                 .edit_original_interaction_response(ctx, |r| {
-                    r.content("Successfully completed re-verifications.")
+                    r.content(format!("Successfully completed re-verifications. Was able to verify {num_verified} {members}."))
                 })
                 .await
                 .context(concat!(file!(), ":", line!()))?;
@@ -156,7 +165,7 @@ pub struct IsVerified {
 }
 
 /// Verifies multiple users, any errors are just printed.
-pub async fn batch_verify(ctx: &Context, user_id: UserId, guild_id: GuildId) -> IsVerified {
+pub async fn silent_verify(ctx: &Context, user_id: UserId, guild_id: GuildId) -> IsVerified {
     match api::is_verified(user_id, guild_id)
         .await
         .context(concat!(file!(), ":", line!()))
@@ -325,23 +334,24 @@ pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Res
         .await
         .ok_or_else(|| anyhow!("Did not receive response"))?;
 
-    match modal_response(&command, verified, partial_guild).await {
-        Ok(c) => {
+    match join!(
+        modal_response(&command, verified, partial_guild),
+        command.defer(ctx)
+    ) {
+        (Ok(c), _) => {
             command
-                .create_interaction_response(ctx, |r| {
-                    r.kind(InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|d| d.content(c))
-                })
+                .create_followup_message(ctx, |d| d.content(c))
                 .await
                 .context(concat!(file!(), ":", line!()))?;
+            {
+                let mut cache = api::GET_ROLE_ID.lock().await;
+                cache.cache_remove(&command.guild_id.unwrap());
+            }
             Ok(())
         }
-        Err(e) => {
+        (Err(e), _) => {
             command
-                .create_interaction_response(ctx, |r| {
-                    r.kind(InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|d| d.content(format!("{e}")))
-                })
+                .create_followup_message(ctx, |d| d.content(format!("{e}")))
                 .await
                 .context(concat!(file!(), ":", line!()))?;
             Err(e).context("Error when responding to modal.")

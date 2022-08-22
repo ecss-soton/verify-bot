@@ -11,8 +11,10 @@ use anyhow::{anyhow, ensure};
 use serenity::model::prelude::{GuildId, RoleId, UserId};
 use serenity::model::Timestamp;
 
+use log::warn;
 use serenity::utils::Colour;
 use std::env;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -59,6 +61,7 @@ struct VerifiedParams {
 
 #[cached(key = "UserId", result = true, convert = r##"{user_id}"##)]
 pub async fn is_verified(user_id: UserId, guild_id: GuildId) -> Result<()> {
+    let elapsed = Instant::now();
     let params = VerifiedParams { user_id, guild_id };
     let resp = CLIENT
         .get(
@@ -68,6 +71,10 @@ pub async fn is_verified(user_id: UserId, guild_id: GuildId) -> Result<()> {
         .json(&params)
         .send()
         .await?;
+    let elapsed = elapsed.elapsed();
+    if elapsed > Duration::from_millis(400) {
+        warn!("Took {elapsed:?} to check if user is verified.");
+    }
 
     match resp.status().into() {
         200 => {
@@ -88,14 +95,11 @@ pub async fn is_verified(user_id: UserId, guild_id: GuildId) -> Result<()> {
     }
 }
 
-/// This is non-exhaustive.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Guild {
     #[serde(rename = "roleId")]
     pub role_id: RoleId,
     pub approved: bool,
-    #[serde(rename = "susuLink")]
-    pub susu_link: Url,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
@@ -106,6 +110,7 @@ struct GuildParams {
 
 #[cached(result = true)]
 pub async fn get_role_id(guild_id: GuildId) -> Result<RoleId> {
+    let elapsed = Instant::now();
     let resp = CLIENT
         .get(
             env::var("API_URL").expect("API_URL environment var has not been set.")
@@ -115,6 +120,10 @@ pub async fn get_role_id(guild_id: GuildId) -> Result<RoleId> {
         .send()
         .await?;
 
+    let elapsed = elapsed.elapsed();
+    if elapsed > Duration::from_millis(400) {
+        warn!("Took {elapsed:?} to get role id.");
+    }
     match resp.status().into() {
         200 => {
             let resp = resp.json::<Guild>().await?;
@@ -156,6 +165,7 @@ pub struct Register {
 }
 
 pub async fn register_guild(info: RegisterParams) -> Result<Register> {
+    let elapsed = Instant::now();
     let resp = CLIENT
         .post(
             env::var("API_URL").expect("API_URL environment var has not been set.")
@@ -164,6 +174,10 @@ pub async fn register_guild(info: RegisterParams) -> Result<Register> {
         .json(&info)
         .send()
         .await?;
+    let elapsed = elapsed.elapsed();
+    if elapsed > Duration::from_millis(400) {
+        warn!("Took {elapsed:?} to register guild.");
+    }
 
     match resp.status().into() {
         200 => Ok(resp.json::<Register>().await?),

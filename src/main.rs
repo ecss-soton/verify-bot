@@ -21,7 +21,7 @@ use serenity::model::Permissions;
 use serenity::prelude::*;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::commands::{batch_verify, re_verify, setup, verify};
+use crate::commands::{re_verify, setup, silent_verify, verify};
 
 mod commands;
 
@@ -62,7 +62,7 @@ struct Handler;
 impl EventHandler for Handler {
     async fn guild_member_addition(&self, ctx: Context, new_member: Member) {
         let (guild_id, user_id) = (new_member.guild_id, new_member.user.id);
-        batch_verify(&ctx, user_id, guild_id).await;
+        silent_verify(&ctx, user_id, guild_id).await;
         TASK_LIST
             .get()
             .expect("OnceCell should be instantiated")
@@ -136,7 +136,7 @@ async fn check_for_verify(ctx: Context, mut rec: UnboundedReceiver<(UserId, Guil
         while let Ok(new_task) = rec.try_recv() {
             if let Some(0) | None = tries.get(&new_task.0) {
                 // Only add a task if one doesn't already exist.
-                task_list_a.push(batch_verify(ctx, new_task.0, new_task.1))
+                task_list_a.push(silent_verify(ctx, new_task.0, new_task.1))
             }
             tries.insert(new_task.0, TRIES);
         }
@@ -151,7 +151,7 @@ async fn check_for_verify(ctx: Context, mut rec: UnboundedReceiver<(UserId, Guil
                 }
                 Some(_) => {
                     if !task.verified {
-                        task_list_b.push(batch_verify(ctx, task.user_id, task.guild_id));
+                        task_list_b.push(silent_verify(ctx, task.user_id, task.guild_id));
                     }
                 }
             }
