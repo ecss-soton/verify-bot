@@ -1,16 +1,19 @@
 # University of Southampton verification Discord bot
 
-A bot to interact with the [global verification API](https://github.com/ecss-soton/verify) to verify users in University of Southampton related discord servers.
+A bot to interact with the [global verification API](https://github.com/ecss-soton/verify) to verify users in University
+of Southampton related discord servers.
 
 ## How to set up the bot
 
 1) [Invite](https://society.ecs.soton.ac.uk/verify-invite) the bot
-2) Run /setup
+2) Run /setup specifying your verified role (you can learn more about creating a verified role [here](setup.md))
 3) Enjoy easy verification of your members!
 
 ### How it all works
 
-With this service users can verify themselves once on the website and then never have to verify again! We store who is verified and who isn't in our database and then whenever you run /verify or join a server we will give you that servers verified role!
+With this service users can verify themselves once on the website and then never have to verify again! We store who is
+verified and who isn't in our database and then whenever you run /verify or join a server we will give you that server's
+verified role!
 
 ## Commands
 
@@ -42,7 +45,7 @@ Go to the project directory
   cd verify-bot
 ```
 
-Configure the environment variables. See [Environment Variables]
+Configure the environment variables. See [Environment Variables](#Environment-Variables)
 
 Start the bot
 
@@ -69,6 +72,3 @@ DISPLAY_URL="The URL to display to users for verification"
 ### Docker image
 
 TODO Add docker image link with dockerfile
-
-## Running Tests
-
