@@ -4,21 +4,24 @@ use std::time::Duration;
 use anyhow::Result;
 use anyhow::{anyhow, bail, ensure, Context as ContextTrait};
 use cached::Cached;
-use futures::join;
 use futures::stream::FuturesUnordered;
+use futures::{join, Stream};
 use log::warn;
 use reqwest::Url;
-use serenity::client::Context;
-use serenity::collector::{ModalInteractionCollector, ModalInteractionCollectorBuilder};
-use serenity::futures::StreamExt;
-use serenity::model::application::component::ActionRowComponent::InputText;
-use serenity::model::application::component::InputTextStyle;
-use serenity::model::application::interaction::application_command::{
-    ApplicationCommandInteraction, CommandDataOptionValue,
+use serenity::all::ActionRowComponent::InputText;
+use serenity::all::{
+    CommandDataOptionValue, CommandInteraction, CreateActionRow, CreateInteractionResponse,
+    EditInteractionResponse, InputTextStyle, ModalInteraction,
 };
-use serenity::model::application::interaction::InteractionResponseType;
+use serenity::builder::{
+    CreateInputText, CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
+    CreateModal,
+};
+use serenity::client::Context;
+use serenity::collector::ModalInteractionCollector;
+use serenity::futures::StreamExt;
+
 use serenity::model::guild::{PartialGuild, Role};
-use serenity::model::prelude::interaction::modal::ModalSubmitInteraction;
 use serenity::model::prelude::{GuildId, UserId};
 
 use crate::commands::api::{register_guild, RegisterParams};
@@ -26,7 +29,7 @@ use crate::TASK_LIST;
 
 mod api;
 
-pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
+pub async fn verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
     let guild_id = command.guild_id.unwrap();
     match api::is_verified(command.user.id, guild_id)
         .await
@@ -39,30 +42,27 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
             Ok(role) => {
                 match ctx
                     .http
-                    .add_member_role(command.guild_id.unwrap().0, command.user.id.0, role.0, None)
+                    .add_member_role(command.guild_id.unwrap(), command.user.id, role, None)
                     .await
                     .context(concat!(file!(), ":", line!()))
                 {
                     Ok(_) => {
                         command
-                            .create_interaction_response(ctx, |r| {
-                                r.kind(InteractionResponseType::ChannelMessageWithSource)
-                                    .interaction_response_data(|d| {
-                                        d.ephemeral(true).content("You have now been verified!")
-                                    })
-                            })
+                            .create_response(
+                                ctx,
+                                CreateInteractionResponse::Message(
+                                    CreateInteractionResponseMessage::new()
+                                        .ephemeral(true)
+                                        .content("You have now been verified!"),
+                                ),
+                            )
                             .await
                             .context(concat!(file!(), ":", line!()))?;
                         Ok(())
                     }
                     Err(e) => {
                         command
-                            .create_interaction_response(ctx, |r| {
-                                r.kind(InteractionResponseType::ChannelMessageWithSource)
-                                    .interaction_response_data(|d| {
-                                        d.content("I was unable to add the verified role, please make sure my role has higher permissions than the verified role.")
-                                    })
-                            })
+                            .create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("I was unable to add the verified role, please make sure my role has higher permissions than the verified role.")))
                             .await.context(concat!(file!(), ":", line!()))?;
                         Err(e).context("Could not add verified role.")
                     }
@@ -70,12 +70,8 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
             }
             Err(e) => {
                 command
-                    .create_interaction_response(ctx, |r| {
-                        r.kind(InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data(|d| {
-                                d.content("It looks like your server doesn't support this bot, please contact the admins.")
-                            })
-                    })
+                    .create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("It looks like your server doesn't support this bot, please contact the admins."))
+                  )
                     .await.context(concat!(file!(), ":", line!()))?;
                 Err(e)
             }
@@ -88,16 +84,11 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
                 .ok();
 
             command
-                .create_interaction_response(ctx, |r| {
-                    r.kind(InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|d| {
-                            d.ephemeral(true).content(format!(
-                                "Please verify yourself by going to {}",
+                .create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().ephemeral(true).content(format!(
+                                "Please verify yourself by going to {} and then run this command again.",
                                 env::var("DISPLAY_URL")
                                     .expect("DISPLAY_URL environment var has not been set.")
-                            ))
-                        })
-                })
+                            ))))
                 .await
                 .context(concat!(file!(), ":", line!()))?;
             e
@@ -106,7 +97,7 @@ pub async fn verify(ctx: &Context, command: ApplicationCommandInteraction) -> Re
 }
 
 /// Re-verifies an entire server (This only adds verified people), also invalidates guild role cache
-pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
+pub async fn re_verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
     let guild_id = command.guild_id.unwrap();
     {
         let mut cache = api::GET_ROLE_ID.lock().await;
@@ -139,18 +130,14 @@ pub async fn re_verify(ctx: &Context, command: ApplicationCommandInteraction) ->
                 _ => "members",
             };
             command
-                .edit_original_interaction_response(ctx, |r| {
-                    r.content(format!("Successfully completed re-verifications. Was able to verify {num_verified} {members}."))
-                })
+                .edit_response(ctx, EditInteractionResponse::new().content(format!("Successfully completed re-verifications. Was able to verify {num_verified} {members}.")))
                 .await
                 .context(concat!(file!(), ":", line!()))?;
             Ok(())
         }
         Err(e) => {
             command
-                .edit_original_interaction_response(ctx, |r| {
-                    r.content("It looks like your server doesn't support this bot, please contact the admins.")
-                })
+                .edit_response(ctx, EditInteractionResponse::new().content("It looks like your server doesn't support this bot, please contact the admins."))
                 .await.context(concat!(file!(), ":", line!()))?;
             Err(e)
         }
@@ -176,7 +163,7 @@ pub async fn silent_verify(ctx: &Context, user_id: UserId, guild_id: GuildId) ->
             if let Ok(role) = api::get_role_id(guild_id).await {
                 if let Err(e) = ctx
                     .http
-                    .add_member_role(guild_id.0, user_id.0, role.0, None)
+                    .add_member_role(guild_id, user_id, role, None)
                     .await
                     .context(concat!(file!(), ":", line!()))
                 {
@@ -202,115 +189,97 @@ pub async fn silent_verify(ctx: &Context, user_id: UserId, guild_id: GuildId) ->
 
 async fn create_modal(
     ctx: &Context,
-    command: &ApplicationCommandInteraction,
+    command: &CommandInteraction,
     partial_guild: &PartialGuild,
-) -> Result<ModalInteractionCollector> {
+) -> Result<impl Stream<Item = ModalInteraction>> {
     command
-        .create_interaction_response(ctx, |r| {
-            r.kind(InteractionResponseType::Modal)
-                .interaction_response_data(|m| {
-                    m.components(|c| {
-                        c.create_action_row(|a| {
-                            a.create_input_text(|t| {
-                                t.required(true)
-                                    .label("Server Name")
-                                    .value(&*partial_guild.name)
-                                    .style(InputTextStyle::Short)
-                                    .custom_id("name")
-                            })
-                        })
-                        .create_action_row(|a| {
-                            a.create_input_text(|t| {
-                                t.required(true)
-                                    .label("Invite Link")
-                                    .placeholder("https://discord.com/invite/9SYG22wR4V")
-                                    .style(InputTextStyle::Short)
-                                    .custom_id("invite")
-                            })
-                        })
-                        .create_action_row(|a| {
-                            a.create_input_text(|t| {
-                                t.required(false)
-                                    .label("SUSU Link")
-                                    .placeholder("https://www.susu.org/groups/ecss")
-                                    .style(InputTextStyle::Short)
-                                    .custom_id("susu")
-                            })
-                        })
-                    })
-                    .custom_id("setup-modal")
-                    .title("Setup Your Server")
-                })
-        })
+        .create_response(
+            ctx,
+            CreateInteractionResponse::Modal(
+                CreateModal::new("setup-modal", "Setup Your Server").components(vec![
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Server Name", "name")
+                            .value(&*partial_guild.name),
+                    ),
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Invite Link", "invite")
+                            .placeholder("https://discord.gg/9SYG22wR4V"),
+                    ),
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "SUSU Link", "susu")
+                            .required(false)
+                            .placeholder("https://www.susu.org/groups/ecss"),
+                    ),
+                ]),
+            ),
+        )
         .await
         .context(concat!(file!(), ":", line!()))?;
 
-    Ok(ModalInteractionCollectorBuilder::new(ctx)
+    Ok(ModalInteractionCollector::new(ctx)
         .guild_id(command.guild_id.unwrap())
         .author_id(command.user.id)
-        .collect_limit(1)
         .timeout(Duration::from_secs(60 * 15))
         .filter(|modal| modal.data.custom_id == "setup-modal")
-        .build())
+        .stream())
 }
 
 async fn get_verified_role(
     ctx: &Context,
-    command: &ApplicationCommandInteraction,
+    command: &CommandInteraction,
     partial_guild: &PartialGuild,
 ) -> Result<Role> {
     let guild_id = command.guild_id.unwrap();
-    let (bot, permissions) = join!(
-        guild_id.member(ctx, ctx.cache.current_user_id()),
-        partial_guild.member_permissions(ctx, ctx.cache.current_user_id())
-    );
-    let bot = bot?;
+    let current_user = ctx.cache.current_user().id;
+    let bot = guild_id.member(ctx, current_user).await?;
 
-    if permissions.map_or(false, |p| !p.manage_roles()) {
+    if bot.permissions.map_or(false, |p| !p.manage_roles()) {
         command
-            .create_interaction_response(ctx, |r| {
-                r.kind(InteractionResponseType::ChannelMessageWithSource)
-                    .interaction_response_data(|d| {
-                        d.content("Please make sure I have the permissions to manage roles.")
-                    })
-            })
+            .create_response(
+                ctx,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content("Please make sure I have the permissions to manage roles."),
+                ),
+            )
             .await
             .context(concat!(file!(), ":", line!()))?;
         bail!("Not given permission to manage roles.")
     }
-    let role;
+    let mut role = Role::default();
     let bot_position = bot
         .roles
         .iter()
         .filter_map(|r| partial_guild.roles.get(r).map(|r| r.position))
         .max();
 
-    match command.data.options.get(0).and_then(|o| o.resolved.clone()) {
+    match command.data.options.get(0).map(|o| o.value.clone()) {
         Some(CommandDataOptionValue::Role(r)) => {
-            role = r;
+            role = ctx
+                .http
+                .get_guild_roles(guild_id)
+                .await?
+                .into_iter()
+                .find(|gr| gr.id == r)
+                .unwrap();
+
             if let Some(position) = bot_position {
                 if role.position > position {
-                    command.create_interaction_response(ctx,
-                        |r| {
-                            r.kind(InteractionResponseType::ChannelMessageWithSource)
-                                .interaction_response_data(|d| {
-                                    d.content("Unable to use the verified role, please make sure my role has higher permissions than the verified role.")
-                                })
-                        })
+                    command.create_response(ctx, CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new().content("Unable to use the verified role, please make sure my role has higher permissions than the verified role.")))
                         .await.context(concat!(file!(), ":", line!()))?;
-                    bail!("verified role ({role}) has higher position than bot role.")
+
+                    bail!(
+                        "verified role {} ({}) has higher position than bot role.",
+                        role.name,
+                        role.id
+                    )
                 }
             }
-            if role.id.0 == guild_id.0 {
-                command.create_interaction_response(ctx,
-                    |r| {
-                        r.kind(InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data(|d| {
-                                d.content("Unable to use the verified role, please stop trying to crash this bot by using @everyone.")
-                            })
-                    })
+            if role.id.get() == guild_id.get() {
+                command.create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Unable to use the verified role, please stop trying to crash this bot by using @everyone.")))
                     .await.context(concat!(file!(), ":", line!()))?;
-                bail!("verified role ({role}) is @everyone.")
+                bail!("verified role is @everyone.")
             }
         }
         _ => bail!("Unable to get option info."),
@@ -319,7 +288,7 @@ async fn get_verified_role(
     Ok(role)
 }
 
-pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
+pub async fn setup(ctx: &Context, command: CommandInteraction) -> Result<()> {
     let partial_guild = command.guild_id.unwrap().to_partial_guild(ctx).await?;
     let verified = get_verified_role(ctx, &command, &partial_guild)
         .await
@@ -340,7 +309,7 @@ pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Res
     ) {
         (Ok(c), _) => {
             command
-                .create_followup_message(ctx, |d| d.content(c))
+                .create_followup(ctx, CreateInteractionResponseFollowup::new().content(c))
                 .await
                 .context(concat!(file!(), ":", line!()))?;
             {
@@ -351,7 +320,10 @@ pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Res
         }
         (Err(e), _) => {
             command
-                .create_followup_message(ctx, |d| d.content(format!("{e}")))
+                .create_followup(
+                    ctx,
+                    CreateInteractionResponseFollowup::new().content(format!("{e}")),
+                )
                 .await
                 .context(concat!(file!(), ":", line!()))?;
             Err(e).context("Error when responding to modal.")
@@ -360,7 +332,7 @@ pub async fn setup(ctx: &Context, command: ApplicationCommandInteraction) -> Res
 }
 
 async fn modal_response(
-    command: &ModalSubmitInteraction,
+    command: &ModalInteraction,
     verified: Role,
     partial_guild: PartialGuild,
 ) -> Result<&'static str> {
@@ -372,9 +344,9 @@ async fn modal_response(
         .filter_map(|a| a.components.get(0))
     {
         match t {
-            InputText(t) if t.custom_id == "name" => name = Some(t.value.clone()),
-            InputText(t) if t.custom_id == "susu" => susu = Some(t.value.clone()),
-            InputText(t) if t.custom_id == "invite" => invite = Some(t.value.clone()),
+            InputText(t) if t.custom_id == "name" => name = t.value.clone(),
+            InputText(t) if t.custom_id == "susu" => susu = t.value.clone(),
+            InputText(t) if t.custom_id == "invite" => invite = t.value.clone(),
             ar => {
                 return Err(anyhow!(
                     "Received unrecognized id {ar:?} from modal component."
@@ -400,7 +372,7 @@ async fn modal_response(
     let resp = register_guild(RegisterParams {
         guild_id: partial_guild.id,
         name,
-        icon: partial_guild.icon,
+        icon: partial_guild.icon.map(|i| i.to_string()),
         created_at: partial_guild.id.created_at(),
         owner_id: partial_guild.owner_id,
         susu_link,

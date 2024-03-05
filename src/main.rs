@@ -7,15 +7,12 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::{info, warn};
 use once_cell::sync::OnceCell;
+use serenity::all::{Command, CommandInteraction, CommandOptionType, CreateCommand, Interaction};
 use serenity::async_trait;
-use serenity::builder::CreateApplicationCommands;
-use serenity::model::application::command::CommandOptionType;
-use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
-use serenity::model::application::interaction::Interaction;
+use serenity::builder::CreateCommandOption;
 use serenity::model::gateway::Ready;
 use serenity::model::guild::Member;
 use serenity::model::id::GuildId;
-use serenity::model::prelude::command::Command;
 use serenity::model::prelude::UserId;
 use serenity::model::Permissions;
 use serenity::prelude::*;
@@ -25,35 +22,34 @@ use crate::commands::{re_verify, setup, silent_verify, verify};
 
 mod commands;
 
-fn create_commands(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
-    commands
-        .create_application_command(|command| {
-            command
-                .name("verify")
-                .description("Verifies you and gives you a nice role!")
-                .dm_permission(false)
-        })
-        .create_application_command(|command| {
-            command
-                .name("re-verify")
-                .description("Re-verifies everyone on the server.")
-                .dm_permission(false)
-                .default_member_permissions(Permissions::MANAGE_ROLES)
-        })
-        .create_application_command(|command| {
-            command
-                .name("setup")
-                .description("Sets your server up so that users can be verified.")
-                .dm_permission(false)
-                .default_member_permissions(Permissions::ADMINISTRATOR)
-                .create_option(|option| {
-                    option
-                        .name("role")
-                        .description("The role you will be using to mark people as verified.")
-                        .required(true)
-                        .kind(CommandOptionType::Role)
-                })
-        })
+fn create_commands() -> Vec<CreateCommand> {
+    let mut result = vec![];
+    result.push(
+        CreateCommand::new("verify")
+            .description("Verifies you and gives you a nice role!")
+            .dm_permission(false),
+    );
+    result.push(
+        CreateCommand::new("re-verify")
+            .description("Re-verifies everyone on the server.")
+            .dm_permission(false)
+            .default_member_permissions(Permissions::MANAGE_ROLES),
+    );
+    result.push(
+        CreateCommand::new("setup")
+            .description("Sets your server up so that users can be verified.")
+            .dm_permission(false)
+            .default_member_permissions(Permissions::ADMINISTRATOR)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Role,
+                    "role",
+                    "The role you will be using to mark people as verified.",
+                )
+                .required(true),
+            ),
+    );
+    result
 }
 
 struct Handler;
@@ -75,11 +71,11 @@ impl EventHandler for Handler {
 
         let commands = if let Some(guild_id) = env::var("TEST_GUILD_ID")
             .ok()
-            .map(|f| GuildId(f.parse().expect("TEST_GUILD_ID must be an integer.")))
+            .map(|f| GuildId::new(f.parse().expect("TEST_GUILD_ID must be an integer.")))
         {
-            GuildId::set_application_commands(&guild_id, &ctx.http, create_commands).await
+            GuildId::set_commands(guild_id, &ctx.http, create_commands()).await
         } else {
-            Command::set_global_application_commands(&ctx, create_commands).await
+            Command::set_global_commands(&ctx, create_commands()).await
         };
 
         match commands.context("Unable to create commands.") {
@@ -97,7 +93,7 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        if let Interaction::ApplicationCommand(command) = interaction {
+        if let Interaction::Command(command) = interaction {
             let guild = command.guild_id.unwrap();
             let user = command.user.id;
             if let Err(why) = dispatch_commands(&ctx, command).await {
@@ -107,7 +103,7 @@ impl EventHandler for Handler {
     }
 }
 
-async fn dispatch_commands(ctx: &Context, command: ApplicationCommandInteraction) -> Result<()> {
+async fn dispatch_commands(ctx: &Context, command: CommandInteraction) -> Result<()> {
     match command.data.name.as_str() {
         "verify" => verify(ctx, command)
             .await
@@ -175,6 +171,8 @@ async fn main() {
         .event_handler(Handler)
         .await
         .expect("Error creating client");
+
+    info!("Client successfully created!");
 
     if let Err(why) = client.start().await {
         warn!("Client error: {:?}", why);

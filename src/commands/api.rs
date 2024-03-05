@@ -12,7 +12,7 @@ use serenity::model::prelude::{GuildId, RoleId, UserId};
 use serenity::model::Timestamp;
 
 use log::warn;
-use serenity::utils::Colour;
+use serenity::all::Colour;
 use std::env;
 use std::time::{Duration, Instant};
 use thiserror::Error;
