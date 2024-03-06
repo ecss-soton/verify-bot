@@ -93,7 +93,7 @@ pub async fn verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
 }
 
 /// Re-verifies an entire server (This only adds verified people), also invalidates guild role cache
-pub async fn re_verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
+pub async fn verify_all(ctx: &Context, command: CommandInteraction) -> Result<()> {
     let guild_id = command.guild_id.unwrap();
     {
         let mut cache = api::GET_ROLE_ID.lock().await;

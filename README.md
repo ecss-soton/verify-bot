@@ -21,7 +21,7 @@ verified role!
 
 Verifies you or tells you how to verify.
 
-### /re-verify
+### /verify-all
 
 Will batch verify everyone on the server. **Admin only**
 

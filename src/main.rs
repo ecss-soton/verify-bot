@@ -18,7 +18,7 @@ use serenity::model::Permissions;
 use serenity::prelude::*;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::commands::{re_verify, setup, silent_verify, verify};
+use crate::commands::{setup, silent_verify, verify, verify_all};
 
 mod commands;
 
@@ -27,8 +27,8 @@ fn create_commands() -> Vec<CreateCommand> {
         CreateCommand::new("verify")
             .description("Verifies you and gives you a nice role!")
             .dm_permission(false),
-        CreateCommand::new("re-verify")
-            .description("Re-verifies everyone on the server.")
+        CreateCommand::new("verify-all")
+            .description("Verifies everyone on the server.")
             .dm_permission(false)
             .default_member_permissions(Permissions::MANAGE_ROLES),
         CreateCommand::new("setup")
@@ -102,9 +102,9 @@ async fn dispatch_commands(ctx: &Context, command: CommandInteraction) -> Result
         "verify" => verify(ctx, command)
             .await
             .context("Failed to run verify command."),
-        "re-verify" => re_verify(ctx, command)
+        "verify-all" => verify_all(ctx, command)
             .await
-            .context("Ran re-verify command."),
+            .context("Ran verify-all command."),
         "setup" => setup(ctx, command)
             .await
             .context("Failed to run setup command"),
