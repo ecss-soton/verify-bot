@@ -1,14 +1,3 @@
-#FROM rust:1.76-alpine as builder
-#
-#WORKDIR /usr/src/verify-bot
-#COPY . .
-#
-#RUN apk update && apk install libssl-dev && rm -rf /var/lib/apt/lists/*
-#
-#RUN cargo install --path .
-#
-#CMD ["verify-bot"]
-
 FROM rust:1.76-buster as build
 
 # create a new empty shell project
