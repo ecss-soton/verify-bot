@@ -1,5 +1,7 @@
 FROM rust:1.76-buster as build
 
+RUN apt-get update && apt-get -y install libssl-dev openssl && apt upgrade -y openssl && apt clean && rm -rf /var/lib/apt/lists/*
+
 # create a new empty shell project
 RUN USER=root cargo new --bin verify-bot
 WORKDIR /verify-bot
@@ -23,7 +25,7 @@ RUN cargo build --release
 # our final base
 FROM debian:buster
 
-RUN apt-get update && apt-get -y install libssl1.1 && apt clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get -y install libssl-dev openssl && apt upgrade -y openssl && apt clean && rm -rf /var/lib/apt/lists/*
 
 # copy the build artifact from the build stage
 COPY --from=build /verify-bot/target/release/verify-bot .
