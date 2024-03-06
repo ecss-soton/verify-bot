@@ -30,7 +30,7 @@ static CLIENT: Lazy<Client> = Lazy::new(|| {
     headers.insert(
         "Authorization",
         HeaderValue::from_str(
-            &*env::var("API_KEY").expect("API_KEY environment var has not been set."),
+            &env::var("API_KEY").expect("API_KEY environment var has not been set"),
         )
         .unwrap(),
     );
@@ -65,7 +65,7 @@ pub async fn is_verified(user_id: UserId, guild_id: GuildId) -> Result<()> {
     let params = VerifiedParams { user_id, guild_id };
     let resp = CLIENT
         .get(
-            &*(env::var("API_URL").expect("API_URL environment var has not been set.")
+            &*(env::var("API_URL").expect("API_URL environment var has not been set")
                 + "/api/v1/verified"),
         )
         .json(&params)
@@ -113,7 +113,7 @@ pub async fn get_role_id(guild_id: GuildId) -> Result<RoleId> {
     let elapsed = Instant::now();
     let resp = CLIENT
         .get(
-            env::var("API_URL").expect("API_URL environment var has not been set.")
+            env::var("API_URL").expect("API_URL environment var has not been set")
                 + &*format!("/api/v1/guild/{guild_id}"),
         )
         .json(&GuildParams { guild_id })
@@ -168,7 +168,7 @@ pub async fn register_guild(info: RegisterParams) -> Result<Register> {
     let elapsed = Instant::now();
     let resp = CLIENT
         .post(
-            env::var("API_URL").expect("API_URL environment var has not been set.")
+            env::var("API_URL").expect("API_URL environment var has not been set")
                 + "/api/v1/guild/register",
         )
         .json(&info)

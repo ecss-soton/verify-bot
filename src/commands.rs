@@ -31,67 +31,63 @@ mod api;
 
 pub async fn verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
     let guild_id = command.guild_id.unwrap();
-    match api::is_verified(command.user.id, guild_id)
-        .await
-        .context(concat!(file!(), ":", line!()))
-    {
-        Ok(()) => match api::get_role_id(guild_id)
-            .await
-            .context(concat!(file!(), ":", line!()))
-        {
-            Ok(role) => {
-                match ctx
-                    .http
-                    .add_member_role(command.guild_id.unwrap(), command.user.id, role, None)
-                    .await
-                    .context(concat!(file!(), ":", line!()))
-                {
-                    Ok(_) => {
-                        command
-                            .create_response(
-                                ctx,
-                                CreateInteractionResponse::Message(
-                                    CreateInteractionResponseMessage::new()
-                                        .ephemeral(true)
-                                        .content("You have now been verified!"),
-                                ),
-                            )
-                            .await
-                            .context(concat!(file!(), ":", line!()))?;
-                        Ok(())
-                    }
-                    Err(e) => {
-                        command
-                            .create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("I was unable to add the verified role, please make sure my role has higher permissions than the verified role.")))
-                            .await.context(concat!(file!(), ":", line!()))?;
-                        Err(e).context("Could not add verified role.")
-                    }
+    let (ephemeral, role_future) = join!(command.defer_ephemeral(ctx), api::get_role_id(guild_id));
+    ephemeral?;
+    match role_future.context(concat!(file!(), ":", line!())) {
+        Ok(role) => {
+            if let Err(e) = api::is_verified(command.user.id, guild_id)
+                .await
+                .context(concat!(file!(), ":", line!()))
+            {
+                TASK_LIST
+                    .get()
+                    .expect("OnceCell should be instantiated")
+                    .send((command.user.id, guild_id))
+                    .ok();
+
+                command
+                        .edit_response(ctx, EditInteractionResponse::new().content(format!(
+                            "Please verify yourself by going to {} and then run this command again.",
+                            env::var("DISPLAY_URL")
+                                .expect("DISPLAY_URL environment var has not been set")
+                        )))
+                        .await
+                        .context(concat!(file!(), ":", line!()))?;
+                return Err(e);
+            }
+
+            match ctx
+                .http
+                .add_member_role(command.guild_id.unwrap(), command.user.id, role, None)
+                .await
+                .context(concat!(file!(), ":", line!()))
+            {
+                Ok(_) => {
+                    command
+                        .edit_response(
+                            ctx,
+                            EditInteractionResponse::new().content("You have now been verified!"),
+                        )
+                        .await
+                        .context(concat!(file!(), ":", line!()))?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let message = command
+                        .edit_response(ctx, EditInteractionResponse::new().content("I was unable to add the verified role, please make sure my role has higher permissions than the verified role."))
+                        .await.context(concat!(file!(), ":", line!()))?;
+                    message.channel_id.say(ctx, "This bot has not been correctly setup. Please contact the admins so they can ensure the bot's role has higher permissions than the verified role.").await.context(concat!(file!(), ":", line!()))?;
+                    Err(e).context("Could not add verified role.")
                 }
             }
-            Err(e) => {
-                command
-                    .create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("It looks like your server doesn't support this bot, please contact the admins."))
-                  )
-                    .await.context(concat!(file!(), ":", line!()))?;
-                Err(e)
-            }
-        },
-        e => {
-            TASK_LIST
-                .get()
-                .expect("OnceCell should be instantiated")
-                .send((command.user.id, guild_id))
-                .ok();
-
-            command
-                .create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().ephemeral(true).content(format!(
-                                "Please verify yourself by going to {} and then run this command again.",
-                                env::var("DISPLAY_URL")
-                                    .expect("DISPLAY_URL environment var has not been set.")
-                            ))))
-                .await
-                .context(concat!(file!(), ":", line!()))?;
-            e
+        }
+        Err(e) => {
+            let message = command
+                .edit_response(ctx, EditInteractionResponse::new().content("It looks like your server doesn't support this bot, please contact the admins.")
+                )
+                .await.context(concat!(file!(), ":", line!()))?;
+            message.channel_id.say(ctx, "This bot has not been correctly setup. Please contact the admins so they can run /setup.").await.context(concat!(file!(), ":", line!()))?;
+            Err(e)
         }
     }
 }
@@ -246,14 +242,14 @@ async fn get_verified_role(
             .context(concat!(file!(), ":", line!()))?;
         bail!("Not given permission to manage roles.")
     }
-    let mut role = Role::default();
+    let role;
     let bot_position = bot
         .roles
         .iter()
         .filter_map(|r| partial_guild.roles.get(r).map(|r| r.position))
         .max();
 
-    match command.data.options.get(0).map(|o| o.value.clone()) {
+    match command.data.options.first().map(|o| o.value.clone()) {
         Some(CommandDataOptionValue::Role(r)) => {
             role = ctx
                 .http
@@ -341,7 +337,7 @@ async fn modal_response(
         .data
         .components
         .iter()
-        .filter_map(|a| a.components.get(0))
+        .filter_map(|a| a.components.first())
     {
         match t {
             InputText(t) if t.custom_id == "name" => name = t.value.clone(),
@@ -358,7 +354,7 @@ async fn modal_response(
     let name = name.ok_or_else(|| anyhow!("name was not sent."))?;
     let susu_link = match susu
         .filter(|s| !s.trim().is_empty())
-        .map(|s| Url::parse(&*s))
+        .map(|s| Url::parse(&s))
     {
         Some(Err(e)) => {
             return Err(e).context("Unable to parse susu link, please make sure it is a url.");
@@ -366,7 +362,7 @@ async fn modal_response(
         Some(Ok(l)) => Some(l),
         None => None,
     };
-    let invite_link = Url::parse(&*invite.ok_or_else(|| anyhow!("invite was not sent."))?)
+    let invite_link = Url::parse(&invite.ok_or_else(|| anyhow!("invite was not sent."))?)
         .context("Unable to parse invite link, please make sure it is a url.")?;
 
     let resp = register_guild(RegisterParams {

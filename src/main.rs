@@ -23,19 +23,14 @@ use crate::commands::{re_verify, setup, silent_verify, verify};
 mod commands;
 
 fn create_commands() -> Vec<CreateCommand> {
-    let mut result = vec![];
-    result.push(
+    vec![
         CreateCommand::new("verify")
             .description("Verifies you and gives you a nice role!")
             .dm_permission(false),
-    );
-    result.push(
         CreateCommand::new("re-verify")
             .description("Re-verifies everyone on the server.")
             .dm_permission(false)
             .default_member_permissions(Permissions::MANAGE_ROLES),
-    );
-    result.push(
         CreateCommand::new("setup")
             .description("Sets your server up so that users can be verified.")
             .dm_permission(false)
@@ -48,8 +43,7 @@ fn create_commands() -> Vec<CreateCommand> {
                 )
                 .required(true),
             ),
-    );
-    result
+    ]
 }
 
 struct Handler;
@@ -71,7 +65,7 @@ impl EventHandler for Handler {
 
         let commands = if let Some(guild_id) = env::var("TEST_GUILD_ID")
             .ok()
-            .map(|f| GuildId::new(f.parse().expect("TEST_GUILD_ID must be an integer.")))
+            .map(|f| GuildId::new(f.parse().expect("TEST_GUILD_ID must be an integer")))
         {
             GuildId::set_commands(guild_id, &ctx.http, create_commands()).await
         } else {
@@ -88,7 +82,7 @@ impl EventHandler for Handler {
         }
 
         let (send, recv) = unbounded_channel();
-        TASK_LIST.set(send).expect("OnceCell has not yet been set.");
+        TASK_LIST.set(send).expect("OnceCell has not yet been set");
         tokio::task::spawn(check_for_verify(ctx, recv));
     }
 
@@ -138,10 +132,11 @@ async fn check_for_verify(ctx: Context, mut rec: UnboundedReceiver<(UserId, Guil
         }
 
         while let Some(task) = task_list_a.next().await {
-            match tries.get_mut(&task.user_id).map(|t| {
+            let new_tries = tries.get_mut(&task.user_id).map(|t| {
                 *t -= 1;
                 *t
-            }) {
+            });
+            match new_tries {
                 Some(0) | None => {
                     tries.remove(&task.user_id);
                 }
@@ -165,7 +160,7 @@ async fn main() {
     log4rs::init_raw_config(config).unwrap();
 
     dotenv::dotenv().ok();
-    let token = env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN environment var has not been set.");
+    let token = env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN environment var has not been set");
 
     let mut client = Client::builder(token, GatewayIntents::GUILD_MEMBERS)
         .event_handler(Handler)
