@@ -31,9 +31,10 @@ mod api;
 
 pub async fn verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
     let guild_id = command.guild_id.unwrap();
-    let (ephemeral, role_future) = join!(command.defer_ephemeral(ctx), api::get_role_id(guild_id));
-    ephemeral?;
-    match role_future.context(concat!(file!(), ":", line!())) {
+    match api::get_role_id(guild_id)
+        .await
+        .context(concat!(file!(), ":", line!()))
+    {
         Ok(role) => {
             if let Err(e) = api::is_verified(command.user.id, guild_id)
                 .await
@@ -46,11 +47,11 @@ pub async fn verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
                     .ok();
 
                 command
-                        .edit_response(ctx, EditInteractionResponse::new().content(format!(
+                        .create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content(format!(
                             "Please verify yourself by going to {} and then run this command again.",
                             env::var("DISPLAY_URL")
                                 .expect("DISPLAY_URL environment var has not been set")
-                        )))
+                        )).ephemeral(true)))
                         .await
                         .context(concat!(file!(), ":", line!()))?;
                 return Err(e);
@@ -64,29 +65,31 @@ pub async fn verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
             {
                 Ok(_) => {
                     command
-                        .edit_response(
+                        .create_response(
                             ctx,
-                            EditInteractionResponse::new().content("You have now been verified!"),
+                            CreateInteractionResponse::Message(
+                                CreateInteractionResponseMessage::new()
+                                    .content("You have now been verified!")
+                                    .ephemeral(true),
+                            ),
                         )
                         .await
                         .context(concat!(file!(), ":", line!()))?;
                     Ok(())
                 }
                 Err(e) => {
-                    let message = command
-                        .edit_response(ctx, EditInteractionResponse::new().content("I was unable to add the verified role, please make sure my role has higher permissions than the verified role."))
+                    command
+                        .create_response(ctx,  CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("I was unable to add the verified role, please make sure my role has higher permissions than the verified role.")))
                         .await.context(concat!(file!(), ":", line!()))?;
-                    message.channel_id.say(ctx, "This bot has not been correctly setup. Please contact the admins so they can ensure the bot's role has higher permissions than the verified role.").await.context(concat!(file!(), ":", line!()))?;
                     Err(e).context("Could not add verified role.")
                 }
             }
         }
         Err(e) => {
-            let message = command
-                .edit_response(ctx, EditInteractionResponse::new().content("It looks like your server doesn't support this bot, please contact the admins.")
+            command
+                .create_response(ctx,  CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("It looks like your server doesn't support this bot, please contact the admins so they can run /setup."))
                 )
                 .await.context(concat!(file!(), ":", line!()))?;
-            message.channel_id.say(ctx, "This bot has not been correctly setup. Please contact the admins so they can run /setup.").await.context(concat!(file!(), ":", line!()))?;
             Err(e)
         }
     }
