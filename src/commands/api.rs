@@ -89,6 +89,9 @@ pub async fn is_verified(user_id: UserId, guild_id: GuildId) -> Result<()> {
         404 => Err(anyhow!(
             "User ({params:?}) does not exist or is not verified."
         )),
+        403 => Err(anyhow!(
+            "Guild with id of {guild_id} has not been approved yet."
+        )),
         401 => Err(ParamError::IncorrectAuth.into()),
         400 => Err(ParamError::InvalidParams(resp.text().await).into()),
         _ => Err(anyhow!("Unknown error: {resp:?}")),
@@ -127,9 +130,16 @@ pub async fn get_role_id(guild_id: GuildId) -> Result<RoleId> {
     match resp.status().into() {
         200 => {
             let resp = resp.json::<Guild>().await?;
+            ensure!(
+                resp.approved,
+                "Guild with id of {guild_id} has not been approved yet."
+            );
             Ok(resp.role_id)
         }
         404 => Err(anyhow!("Guild with id of {guild_id} does not exist.")),
+        403 => Err(anyhow!(
+            "Guild with id of {guild_id} has not been approved yet."
+        )),
         401 => Err(ParamError::IncorrectAuth.into()),
         400 => Err(ParamError::InvalidParams(resp.text().await).into()),
         _ => Err(anyhow!("Unknown error: {resp:?}")),

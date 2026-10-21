@@ -21,6 +21,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use crate::commands::{setup, silent_verify, verify, verify_all};
 
 mod commands;
+mod link;
 
 fn create_commands() -> Vec<CreateCommand> {
     vec![

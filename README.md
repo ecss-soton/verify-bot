@@ -67,7 +67,26 @@ TEST_GUILD_ID="Guild Id"
 API_KEY="The API key for the Soton verify service"
 API_URL="The URL to that API"
 DISPLAY_URL="The URL to display to users for verification"
+# Must match LINK_TOKEN_SECRET in the verify backend. Used to sign /verify links.
+LINK_TOKEN_SECRET="A long random string shared with the verify backend"
+# Optional. How long a /verify link stays usable, in seconds. Defaults to 900 (15 minutes).
+LINK_TOKEN_TTL_SECONDS="900"
 ```
+
+### How verification works
+
+Running `/verify` asks the bot for a short-lived, signed link. The link contains the
+Discord account and guild, so when the user opens it the website only has to ask them
+to sign in with Southampton (in that same browser) and then writes the link to the
+database. No Discord OAuth correlation cookie is involved, so the flow works from the
+Discord mobile app, an in-app browser, or a completely different browser.
+
+After linking, the bot's poll of the verification API notices the link and gives the
+user the verified role. If the poll has already timed out, running `/verify` again is
+enough.
+
+Running `/setup` registers the server, but it still has to be approved by the Soton
+Verify admins before `/verify` will work.
 
 ### Docker image
 

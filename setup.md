@@ -43,5 +43,6 @@ You should now have everything setup, to check everything has worked we recommen
 role and everyone role. This can be done by going back into the role editing menu and then clicking the 3 dots at the
 top left.
 
-Once you are happy with your changes notify your users that they will need to verify themselves by going
-to https://sotonverify.link/ and then running the /verify command. 
+Once you are happy with your changes notify your users that they will need to verify themselves by running the /verify
+command. The bot will send them a one-time link; opening it and signing in with their Southampton account finishes the
+link.
