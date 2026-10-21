@@ -1,4 +1,3 @@
-use std::env;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -25,6 +24,7 @@ use serenity::model::guild::{PartialGuild, Role};
 use serenity::model::prelude::{GuildId, UserId};
 
 use crate::commands::api::{register_guild, RegisterParams};
+use crate::link;
 use crate::TASK_LIST;
 
 mod api;
@@ -46,11 +46,36 @@ pub async fn verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
                     .send((command.user.id, guild_id))
                     .ok();
 
+                let link_url = match link::verification_url(
+                    command.user.id.get(),
+                    &command.user.tag(),
+                    guild_id.get(),
+                ) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        warn!("Could not create a verification link: {e:?}");
+                        command
+                            .create_response(
+                                ctx,
+                                CreateInteractionResponse::Message(
+                                    CreateInteractionResponseMessage::new()
+                                        .content("I couldn't create a verification link right now. Please contact the server admins.")
+                                        .ephemeral(true),
+                                ),
+                            )
+                            .await
+                            .context(concat!(file!(), ":", line!()))?;
+                        return Err(e);
+                    }
+                };
+
+                let minutes = (link::ttl_seconds() + 59) / 60;
+
                 command
                         .create_response(ctx, CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content(format!(
-                            "Please verify yourself by going to {} and then run this command again.",
-                            env::var("DISPLAY_URL")
-                                .expect("DISPLAY_URL environment var has not been set")
+                            "Please verify yourself by opening {} and signing in with your Southampton account. This link expires in {} minutes. Once you're done I'll give you the verified role automatically — if I don't, run /verify again.",
+                            link_url,
+                            minutes,
                         )).ephemeral(true)))
                         .await
                         .context(concat!(file!(), ":", line!()))?;
@@ -87,7 +112,7 @@ pub async fn verify(ctx: &Context, command: CommandInteraction) -> Result<()> {
         }
         Err(e) => {
             command
-                .create_response(ctx,  CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("It looks like your server doesn't support this bot, please contact the admins so they can run /setup."))
+                .create_response(ctx,  CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("This server isn't set up with Soton Verify yet, or it hasn't been approved. Ask the server admins to run /setup or contact the ECSS web officer."))
                 )
                 .await.context(concat!(file!(), ":", line!()))?;
             Err(e)
@@ -136,7 +161,7 @@ pub async fn verify_all(ctx: &Context, command: CommandInteraction) -> Result<()
         }
         Err(e) => {
             command
-                .edit_response(ctx, EditInteractionResponse::new().content("It looks like your server doesn't support this bot, please contact the admins."))
+                .edit_response(ctx, EditInteractionResponse::new().content("This server isn't set up with Soton Verify yet, or it hasn't been approved. Ask the server admins to run /setup or contact the ECSS web officer."))
                 .await.context(concat!(file!(), ":", line!()))?;
             Err(e)
         }
